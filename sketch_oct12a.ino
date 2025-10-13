@@ -303,7 +303,7 @@ void loop() {
 
     // horizontal positions: left cube (x=70), right cube (x=170)
     int xCenter = (i == 0) ? 70 : 170;
-    int yCenter = 120;
+    int yCenter = 70;
     uint16_t color = (i == 0) ? TFT_ORANGE : TFT_CYAN;
     drawCube(xCenter, yCenter, *qptr, color);
 
@@ -319,5 +319,5 @@ void loop() {
                   i+1, axf, ayf, azf, gxf, gyf, gzf, qptr->w, qptr->x, qptr->y, qptr->z);
   }
 
-  delay(25);
+  delay(5);
 }
