@@ -1,127 +1,69 @@
-#include <Arduino.h>
-#include <TFT_eSPI.h>
 #include "MultiSDA_I2C.h"
-#include "I2Cdev.h"
 
-// === Pin Config for ESP32 LilyGo T-Display ===
 #define SCL_PIN 22
-#define SDA1_PIN 21   // GY-25 #1
-#define SDA2_PIN 17   // GY-25 #2
-#define GY25_ADDR 0x50
+#define SDA1_PIN 21
+#define SDA2_PIN 17
 
-// === MultiSDA_I2C Bus Setup ===
-MultiSDA_I2C i2cBus(SCL_PIN, 5, 20);  // delayUs=5 (~100kHz), timeout=20ms
-MultiSDA_I2C *I2Cbus = &i2cBus;
-uint8_t I2C_sda_pin = SDA1_PIN;       // active SDA line for I2Cdev backend
+#define MPU6050_ADDR 0x68
 
-// === Display ===
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite cube1 = TFT_eSprite(&tft);
-TFT_eSprite cube2 = TFT_eSprite(&tft);
+MultiSDA_I2C multiI2C(SCL_PIN);
 
-float yaw1 = 0, pitch1 = 0, roll1 = 0;
-float yaw2 = 0, pitch2 = 0, roll2 = 0;
+// MPU6050 register addresses
+#define MPU6050_REG_PWR_MGMT_1 0x6B
+#define MPU6050_REG_ACCEL_XOUT_H 0x3B
 
-// === GY-25 Communication (via MultiSDA_I2C) ===
-bool readGY25(uint8_t sdaPin, float &yaw, float &pitch, float &roll) {
-  uint8_t buf[8];
-  I2C_sda_pin = sdaPin;
-
-  if (I2Cbus->readBytes(sdaPin, GY25_ADDR, buf, 8)) {
-    if (buf[0] == 0xAA && buf[1] == 0x55) {
-      yaw   = ((buf[2] << 8) | buf[3]) / 100.0f;
-      pitch = ((buf[4] << 8) | buf[5]) / 100.0f;
-      roll  = ((buf[6] << 8) | buf[7]) / 100.0f;
-      return true;
-    }
-  }
-  return false;
-}
-
-// === Simple Cube Drawing ===
-struct Point3D { float x, y, z; };
-struct Point2D { int16_t x, y; };
-Point2D project3D(const Point3D &p, float yaw, float pitch, float roll, int16_t cx, int16_t cy, float scale);
-
-const Point3D cubeVertices[8] = {
-  {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-  {-1, -1,  1}, {1, -1,  1}, {1, 1,  1}, {-1, 1,  1}
-};
-const uint8_t cubeEdges[12][2] = {
-  {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}
-};
-
-Point2D project3D(const Point3D &p, float yaw, float pitch, float roll, int16_t cx, int16_t cy, float scale) {
-  float radYaw = radians(yaw);
-  float radPitch = radians(pitch);
-  float radRoll = radians(roll);
-
-  float sinY = sin(radYaw), cosY = cos(radYaw);
-  float sinP = sin(radPitch), cosP = cos(radPitch);
-  float sinR = sin(radRoll), cosR = cos(radRoll);
-
-  float x = p.x * cosY * cosR + p.y * (cosY * sinR * sinP - sinY * cosP) + p.z * (cosY * sinR * cosP + sinY * sinP);
-  float y = p.x * sinY * cosR + p.y * (sinY * sinR * sinP + cosY * cosP) + p.z * (sinY * sinR * cosP - cosY * sinP);
-  float z = -p.x * sinR + p.y * cosR * sinP + p.z * cosR * cosP;
-
-  int16_t px = cx + (int16_t)(x * scale);
-  int16_t py = cy - (int16_t)(y * scale);
-  return {px, py};
-}
-
-void drawCube(TFT_eSprite &spr, float yaw, float pitch, float roll, uint16_t color) {
-  Serial.println(F("[drawCube] Called with arguments:"));
-  Serial.print(F("  yaw: "));   Serial.println(yaw, 4);
-  Serial.print(F("  pitch: ")); Serial.println(pitch, 4);
-  Serial.print(F("  roll: "));  Serial.println(roll, 4);
-  Serial.print(F("  color: 0x")); Serial.println(color, HEX);
-  Serial.print(F("  Sprite size: ")); 
-  Serial.print(spr.width()); Serial.print("x"); Serial.println(spr.height());
-  Serial.println();
-
-  spr.fillSprite(TFT_BLACK);
-  Point2D proj[8];
-  for (int i = 0; i < 8; i++)
-    proj[i] = project3D(cubeVertices[i], yaw, pitch, roll, spr.width() / 2, spr.height() / 2, 40);
-
-  for (int i = 0; i < 12; i++)
-    spr.drawLine(proj[cubeEdges[i][0]].x, proj[cubeEdges[i][0]].y,
-                 proj[cubeEdges[i][1]].x, proj[cubeEdges[i][1]].y, color);
-}
-
-// === Setup ===
 void setup() {
   Serial.begin(115200);
-  Serial.println("Initializing MultiSDA_I2C for dual GY-25s...");
-  uint8_t sdaPins[] = { SDA1_PIN, SDA2_PIN };
-  i2cBus.begin(sdaPins, 2);
+  delay(1000);
+  Serial.println("Starting Multi-SDA I2C MPU6050 test...");
 
-  tft.init();
-  tft.setRotation(1);
-  tft.fillScreen(TFT_BLACK);
+  const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
+  multiI2C.begin(sdaPins, 2);
 
-  cube1.createSprite(120, 120);
-  cube2.createSprite(120, 120);
-
-  cube1.setSwapBytes(true);
-  cube2.setSwapBytes(true);
-
-  Serial.println("Setup complete!");
+  // Wake up both MPU6050s (disable sleep)
+  uint8_t data[2] = {MPU6050_REG_PWR_MGMT_1, 0x00};
+  for (uint8_t i = 0; i < 2; i++) {
+    uint8_t sdaPin = sdaPins[i];
+    if (!multiI2C.writeBytes(sdaPin, MPU6050_ADDR, data, 2, true)) {
+      Serial.printf("MPU6050 on SDA pin %d not responding!\n", sdaPin);
+    } else {
+      Serial.printf("MPU6050 on SDA pin %d initialized.\n", sdaPin);
+    }
+    delay(50);
+  }
 }
 
-// === Main Loop ===
 void loop() {
-  bool ok1 = readGY25(SDA1_PIN, yaw1, pitch1, roll1);
-  bool ok2 = readGY25(SDA2_PIN, yaw2, pitch2, roll2);
+  readAndPrintMPU(SDA1_PIN, "MPU1");
+  readAndPrintMPU(SDA2_PIN, "MPU2");
 
-  drawCube(cube1, yaw1, pitch1, roll1, ok1 ? TFT_GREEN : TFT_RED);
-  drawCube(cube2, yaw2, pitch2, roll2, ok2 ? TFT_CYAN : TFT_RED);
-
-  cube1.pushSprite(0, 60);
-  cube2.pushSprite(120, 60);
-
-  delay(100);
+  Serial.println();
+  delay(500);
 }
 
+void readAndPrintMPU(uint8_t sdaPin, const char *label) {
+  uint8_t reg = MPU6050_REG_ACCEL_XOUT_H;
+  uint8_t rawData[14]; // accel (6), temp (2), gyro (6)
 
+  // Write starting register address
+  if (!multiI2C.writeBytes(sdaPin, MPU6050_ADDR, &reg, 1, true)) {
+    Serial.printf("[%s] Write failed on SDA %d\n", label, sdaPin);
+    return;
+  }
 
+  // Read 14 bytes of data
+  if (!multiI2C.readBytes(sdaPin, MPU6050_ADDR, rawData, 14, true)) {
+    Serial.printf("[%s] Read failed on SDA %d\n", label, sdaPin);
+    return;
+  }
+
+  int16_t ax = (rawData[0] << 8) | rawData[1];
+  int16_t ay = (rawData[2] << 8) | rawData[3];
+  int16_t az = (rawData[4] << 8) | rawData[5];
+  int16_t gx = (rawData[8] << 8) | rawData[9];
+  int16_t gy = (rawData[10] << 8) | rawData[11];
+  int16_t gz = (rawData[12] << 8) | rawData[13];
+
+  Serial.printf("[%s] Accel: X=%6d Y=%6d Z=%6d | Gyro: X=%6d Y=%6d Z=%6d\n",
+                label, ax, ay, az, gx, gy, gz);
+}
