@@ -1,69 +1,76 @@
+// Include the MultiSDA_I2C class you pasted
 #include "MultiSDA_I2C.h"
 
+// Shared clock pin
 #define SCL_PIN 22
+
+// Two SDA lines for the two MPU6050 sensors
 #define SDA1_PIN 21
 #define SDA2_PIN 17
 
-#define MPU6050_ADDR 0x68
-
-MultiSDA_I2C multiI2C(SCL_PIN);
+// MPU6050 I2C address (AD0 low)
+#define MPU_ADDR 0x68
 
 // MPU6050 register addresses
-#define MPU6050_REG_PWR_MGMT_1 0x6B
-#define MPU6050_REG_ACCEL_XOUT_H 0x3B
+#define PWR_MGMT_1 0x6B
+#define ACCEL_XOUT_H 0x3B
+
+MultiSDA_I2C myI2C(SCL_PIN);
+
+// Helper to write a single byte to MPU6050
+bool mpuWrite(uint8_t sdaPin, uint8_t reg, uint8_t data) {
+  uint8_t buf[2] = {reg, data};
+  return myI2C.writeBytes(sdaPin, MPU_ADDR, buf, 2, true);
+}
+
+// Helper to read N bytes from MPU6050
+bool mpuRead(uint8_t sdaPin, uint8_t reg, uint8_t *buf, size_t len) {
+  // Send register address first
+  if (!myI2C.writeBytes(sdaPin, MPU_ADDR, &reg, 1, true)) return false;
+  delayMicroseconds(10);
+  return myI2C.readBytes(sdaPin, MPU_ADDR, buf, len, true);
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("Starting Multi-SDA I2C MPU6050 test...");
+  delay(500);
+  Serial.println("\nMPU6050 Dual I2C Reader Starting...");
 
   const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
-  multiI2C.begin(sdaPins, 2);
+  myI2C.begin(sdaPins, 2);
 
-  // Wake up both MPU6050s (disable sleep)
-  uint8_t data[2] = {MPU6050_REG_PWR_MGMT_1, 0x00};
+  // Wake up both MPU6050s
   for (uint8_t i = 0; i < 2; i++) {
-    uint8_t sdaPin = sdaPins[i];
-    if (!multiI2C.writeBytes(sdaPin, MPU6050_ADDR, data, 2, true)) {
-      Serial.printf("MPU6050 on SDA pin %d not responding!\n", sdaPin);
+    uint8_t sda = sdaPins[i];
+    if (mpuWrite(sda, PWR_MGMT_1, 0x00)) {
+      Serial.printf("Sensor %d initialized on SDA %d\n", i + 1, sda);
     } else {
-      Serial.printf("MPU6050 on SDA pin %d initialized.\n", sdaPin);
+      Serial.printf("Sensor %d (SDA %d) failed to init!\n", i + 1, sda);
     }
-    delay(50);
   }
 }
 
 void loop() {
-  readAndPrintMPU(SDA1_PIN, "MPU1");
-  readAndPrintMPU(SDA2_PIN, "MPU2");
+  uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
 
-  Serial.println();
+  for (uint8_t i = 0; i < 2; i++) {
+    uint8_t sda = sdaPins[i];
+    uint8_t buf[14];
+    if (mpuRead(sda, ACCEL_XOUT_H, buf, 14)) {
+      int16_t ax = (buf[0] << 8) | buf[1];
+      int16_t ay = (buf[2] << 8) | buf[3];
+      int16_t az = (buf[4] << 8) | buf[5];
+      int16_t gx = (buf[8] << 8) | buf[9];
+      int16_t gy = (buf[10] << 8) | buf[11];
+      int16_t gz = (buf[12] << 8) | buf[13];
+
+      Serial.printf("MPU%d (SDA=%d): AX=%6d AY=%6d AZ=%6d | GX=%6d GY=%6d GZ=%6d\t",
+                    i + 1, sda, ax, ay, az, gx, gy, gz);
+    } else {
+      Serial.printf("MPU%d (SDA=%d): Read error\n", i + 1, sda);
+    }
+  }
+  Serial.printf("\n");
+
   delay(500);
-}
-
-void readAndPrintMPU(uint8_t sdaPin, const char *label) {
-  uint8_t reg = MPU6050_REG_ACCEL_XOUT_H;
-  uint8_t rawData[14]; // accel (6), temp (2), gyro (6)
-
-  // Write starting register address
-  if (!multiI2C.writeBytes(sdaPin, MPU6050_ADDR, &reg, 1, true)) {
-    Serial.printf("[%s] Write failed on SDA %d\n", label, sdaPin);
-    return;
-  }
-
-  // Read 14 bytes of data
-  if (!multiI2C.readBytes(sdaPin, MPU6050_ADDR, rawData, 14, true)) {
-    Serial.printf("[%s] Read failed on SDA %d\n", label, sdaPin);
-    return;
-  }
-
-  int16_t ax = (rawData[0] << 8) | rawData[1];
-  int16_t ay = (rawData[2] << 8) | rawData[3];
-  int16_t az = (rawData[4] << 8) | rawData[5];
-  int16_t gx = (rawData[8] << 8) | rawData[9];
-  int16_t gy = (rawData[10] << 8) | rawData[11];
-  int16_t gz = (rawData[12] << 8) | rawData[13];
-
-  Serial.printf("[%s] Accel: X=%6d Y=%6d Z=%6d | Gyro: X=%6d Y=%6d Z=%6d\n",
-                label, ax, ay, az, gx, gy, gz);
 }
