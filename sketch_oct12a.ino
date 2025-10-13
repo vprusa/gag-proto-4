@@ -70,6 +70,15 @@ Point2D project3D(const Point3D &p, float yaw, float pitch, float roll, int16_t 
 }
 
 void drawCube(TFT_eSprite &spr, float yaw, float pitch, float roll, uint16_t color) {
+  Serial.println(F("[drawCube] Called with arguments:"));
+  Serial.print(F("  yaw: "));   Serial.println(yaw, 4);
+  Serial.print(F("  pitch: ")); Serial.println(pitch, 4);
+  Serial.print(F("  roll: "));  Serial.println(roll, 4);
+  Serial.print(F("  color: 0x")); Serial.println(color, HEX);
+  Serial.print(F("  Sprite size: ")); 
+  Serial.print(spr.width()); Serial.print("x"); Serial.println(spr.height());
+  Serial.println();
+
   spr.fillSprite(TFT_BLACK);
   Point2D proj[8];
   for (int i = 0; i < 8; i++)
@@ -113,3 +122,6 @@ void loop() {
 
   delay(100);
 }
+
+
+
