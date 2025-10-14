@@ -9,13 +9,19 @@
 
 #define SCL_PIN 22
 #define SDA1_PIN 21
-#define SDA2_PIN 17
+// #define SDA2_PIN 17
+#define SDA2_PIN 27
+#define SDA3_PIN 17
+// #define SDA3_PIN 26
 #define MPU_ADDR 0x68
 
 #define PWR_MGMT_1 0x6B
 #define ACCEL_XOUT_H 0x3B
 
-MultiSDA_I2C myI2C(SCL_PIN);
+// MultiSDA_I2C myI2C(SCL_PIN, 100, 200);
+// MultiSDA_I2C myI2C(SCL_PIN, 10, 20);
+// MultiSDA_I2C myI2C(SCL_PIN, 5, 10);
+MultiSDA_I2C myI2C(SCL_PIN, 1, 1);
 TFT_eSPI tft = TFT_eSPI(); // use default setup file for TTGO T-Display
 
 // ---- types ----
@@ -35,6 +41,7 @@ const float DEG2RAD = PI / 180.0f;
 // ---- state ----
 Quaternion q1 = {1, 0, 0, 0};
 Quaternion q2 = {1, 0, 0, 0};
+Quaternion q3 = {1, 0, 0, 0};
 unsigned long lastMicros = 0;
 
 // -------- I2C helpers ----------
@@ -45,6 +52,8 @@ bool mpuWrite(uint8_t sdaPin, uint8_t reg, uint8_t data) {
 
 bool mpuRead(uint8_t sdaPin, uint8_t reg, uint8_t *buf, size_t len) {
   if (!myI2C.writeBytes(sdaPin, MPU_ADDR, &reg, 1, true)) return false;
+  // delayMicroseconds(10);
+  // delayMicroseconds(1000);
   delayMicroseconds(10);
   return myI2C.readBytes(sdaPin, MPU_ADDR, buf, len, true);
 }
@@ -171,13 +180,22 @@ void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
   }
 }
 
+int pinsCnt = 3;
+const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
+
+
 // -------- setup & loop ----------
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
-  myI2C.begin(sdaPins, 2);
+
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN}; int pinsCnt = 3; myI2C.begin(sdaPins, pinsCnt);
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};  int pinsCnt = 2; myI2C.begin(sdaPins, pinsCnt);
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN}; myI2C.begin(sdaPins, pinsCnt);
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN}; myI2C.begin(sdaPins, pinsCnt);
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN}; myI2C.begin(sdaPins, pinsCnt);
+  myI2C.begin(sdaPins, pinsCnt);
 
   tft.init();
   tft.setRotation(1); // landscape
@@ -197,83 +215,20 @@ void setup() {
   lastMicros = micros();
 }
 
-/*
-void loop() {
-  const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
-  unsigned long now = micros();
-  float dt = (now - lastMicros) / 1e6f;
-  if (dt <= 0) dt = 0.001f;
-  lastMicros = now;
-
-  // Clear the two cube areas (top and bottom)
-  tft.fillRect(0, 28, 240, 100, TFT_BLACK);   // top cube area
-  tft.fillRect(0, 128, 240, 100, TFT_BLACK);  // bottom cube area
-
-  for (int i = 0; i < 2; ++i) {
-    uint8_t sda = sdaPins[i];
-    uint8_t buf[14];
-    if (!mpuRead(sda, ACCEL_XOUT_H, buf, 14)) {
-      Serial.printf("MPU SDA %d read error\n", sda);
-      continue;
-    }
-
-    int16_t ax = (buf[0] << 8) | buf[1];
-    int16_t ay = (buf[2] << 8) | buf[3];
-    int16_t az = (buf[4] << 8) | buf[5];
-    int16_t gx = (buf[8] << 8) | buf[9];
-    int16_t gy = (buf[10] << 8) | buf[11];
-    int16_t gz = (buf[12] << 8) | buf[13];
-
-    float axf = ax / 16384.0f;
-    float ayf = ay / 16384.0f;
-    float azf = az / 16384.0f;
-    float gxf = gx / GYRO_SCALE;
-    float gyf = gy / GYRO_SCALE;
-    float gzf = gz / GYRO_SCALE;
-
-    // integrate gyro to get new orientation
-    Quaternion *qptr = (i == 0) ? &q1 : &q2;
-    Quaternion qGyro = integrateGyro(*qptr, gxf, gyf, gzf, dt);
-
-    // accel-derived orientation
-    Quaternion qAccel = accelToQuat(axf, ayf, azf);
-
-    // fuse
-    *qptr = fuseOrientation(qGyro, qAccel);
-
-    // draw cube
-    int yCenter = (i == 0) ? 78 : 178;
-    uint16_t color = (i == 0) ? TFT_ORANGE : TFT_CYAN;
-    drawCube(120, yCenter, *qptr, color);
-
-    // optional: show numeric pitch/roll estimation for debug
-    // compute pitch/roll from accel
-    float roll  = atan2(ayf, azf) * (180.0f / PI);
-    float pitch = atan2(-axf, sqrt(ayf*ayf + azf*azf)) * (180.0f / PI);
-    char buftxt[32];
-    snprintf(buftxt, sizeof(buftxt), "S%d R:%5.1f P:%5.1f", i+1, roll, pitch);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(buftxt, 8, (i==0)? 38 : 138, 2);
-    Serial.printf("S%d ax=%.2f ay=%.2f az=%.2f gx=%.2f gy=%.2f gz=%.2f q=(%.3f,%.3f,%.3f,%.3f)\n",
-                  i+1, axf, ayf, azf, gxf, gyf, gzf, qptr->w, qptr->x, qptr->y, qptr->z);
-  }
-
-  // target ~30-40 FPS
-  delay(25);
-}
-*/
+int screenWidth = 240;
 
 void loop() {
-  const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};
+  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, };
   unsigned long now = micros();
   float dt = (now - lastMicros) / 1e6f;
   if (dt <= 0) dt = 0.001f;
   lastMicros = now;
 
   // Clear the cube drawing area
-  tft.fillRect(0, 28, 240, 200, TFT_BLACK);
+  tft.fillRect(0, 28, screenWidth, 200, TFT_BLACK);
+  // tft.fillScreen(TFT_BLACK);
 
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < pinsCnt; ++i) {
     uint8_t sda = sdaPins[i];
     uint8_t buf[14];
     if (!mpuRead(sda, ACCEL_XOUT_H, buf, 14)) {
@@ -296,15 +251,19 @@ void loop() {
     float gzf = gz / GYRO_SCALE;
 
     // integrate + fuse
-    Quaternion *qptr = (i == 0) ? &q1 : &q2;
+    // Quaternion *qptr = (i == 0) ? &q1 : &q2;
+    Quaternion *qptr = (i == 0) ? &q1 : (i == 1 ? &q2 : &q3);
+    // Quaternion *qptr = (i == 0) ? &q1 : &q2;
     Quaternion qGyro = integrateGyro(*qptr, gxf, gyf, gzf, dt);
     Quaternion qAccel = accelToQuat(axf, ayf, azf);
     *qptr = fuseOrientation(qGyro, qAccel);
 
     // horizontal positions: left cube (x=70), right cube (x=170)
-    int xCenter = (i == 0) ? 70 : 170;
+    // int xCenter = ((screenWidth / pinsCnt) * i ) + ((2*screenWidth) / pinsCnt);
+    int xCenter = ((screenWidth / pinsCnt) * i ) + 30;
     int yCenter = 70;
-    uint16_t color = (i == 0) ? TFT_ORANGE : TFT_CYAN;
+    // uint16_t color = (i == 0) ? TFT_ORANGE : TFT_CYAN;
+    uint16_t color = (i == 0) ? TFT_ORANGE : ((i == 1) ? TFT_CYAN : TFT_RED);
     drawCube(xCenter, yCenter, *qptr, color);
 
     // optional debug text
@@ -312,12 +271,13 @@ void loop() {
     float pitch = atan2(-axf, sqrt(ayf*ayf + azf*azf)) * (180.0f / PI);
     char buftxt[32];
     snprintf(buftxt, sizeof(buftxt), "S%d R:%5.1f P:%5.1f", i+1, roll, pitch);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(buftxt, (i == 0) ? 8 : 128, 210, 2);
+    // tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    // tft.drawString(buftxt, (i == 0) ? 8 : 128, 210, 2);
+    // tft.drawString(buftxt, ((screenWidth / pinsCnt) * i) + 30, 210, 2);
 
     Serial.printf("S%d ax=%.2f ay=%.2f az=%.2f gx=%.2f gy=%.2f gz=%.2f q=(%.3f,%.3f,%.3f,%.3f)\n",
                   i+1, axf, ayf, azf, gxf, gyf, gzf, qptr->w, qptr->x, qptr->y, qptr->z);
   }
 
-  delay(5);
+  delay(25);
 }
