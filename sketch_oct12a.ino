@@ -1,24 +1,26 @@
-// 6x MPU6050 -> Quaternion-driven rotating cubes on LilyGo T-Display
-// Dual I2C buses (myI2C1 and myI2C2) with independent SCL lines, each serving 3 sensors.
-// Requires: MultiSDA_I2C (bit-banged multi-SDA I2C library) and TFT_eSPI (configured for TTGO T-Display)
+// 4x MPU6050 -> Quaternion-driven rotating cubes on LilyGo T-Display
+// Hybrid I2C: MultiSDA_I2C (bit-banged multi-SDA) serving 3 sensors (SDA pins 21,32,26) with shared SCL,
+// and SoftWire software I2C serving one additional sensor on SDA 27 / SCL 17.
+// Requires:
+//  - MultiSDA_I2C (your provided library)
+//  - SoftWire library
+//  - TFT_eSPI (configured for TTGO T-Display)
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include "MultiSDA_I2C.h"
+#include <SoftWire.h>
 #include <math.h>
 
 // ---- Pin definitions ----
-// Bus 1
-#define SCL1_PIN 22
+#define SCL1_PIN 22     // shared hardware clock for MultiSDA_I2C
 #define SDA1_PIN 21
 #define SDA2_PIN 32
 #define SDA3_PIN 26
-// Bus 2
-#define SCL2_PIN 17
-#define SDA4_PIN 27
-#define SDA5_PIN 25
-#define SDA6_PIN 33
+
+#define SW_SDA 27        // SoftWire SDA
+#define SW_SCL 17        // SoftWire SCL
 
 #define MPU_ADDR 0x68
 #define PWR_MGMT_1 0x6B
@@ -26,7 +28,8 @@
 
 // ---- I2C and Display setup ----
 MultiSDA_I2C myI2C1(SCL1_PIN, 5, 10);
-MultiSDA_I2C myI2C2(SCL2_PIN, 5, 10);
+SoftWire softWire(SW_SDA, SW_SCL);
+
 TFT_eSPI tft = TFT_eSPI();
 
 // ---- math structs ----
@@ -34,43 +37,21 @@ struct Quaternion { float w, x, y, z; };
 struct Vec3 { float x, y, z; };
 
 // ---- constants ----
-const float GYRO_SCALE = 131.0f;   // LSB per deg/s for ±250dps
+const float GYRO_SCALE = 131.0f;
 const float ALPHA = 0.98f;
 const float DEG2RAD = PI / 180.0f;
 
 // ---- runtime state ----
-Quaternion qs[6] = {
-  {1,0,0,0}, {1,0,0,0}, {1,0,0,0},
-  {1,0,0,0}, {1,0,0,0}, {1,0,0,0}
-};
+const uint8_t sdaPins1[] = { SDA1_PIN, SDA2_PIN, SDA3_PIN };
+const uint8_t sdaSoft = SW_SDA;
+const int pinsCnt1 = sizeof(sdaPins1)/sizeof(sdaPins1[0]);
+const int pinsCntSoft = 1;
+const int sensorsTotal = pinsCnt1 + pinsCntSoft;
+
+Quaternion qs[sensorsTotal];
 unsigned long lastMicros = 0;
 
-// ---- pin setup ----
-// const uint8_t sdaPins1[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
-// const uint8_t sdaPins1[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN, SDA4_PIN, SDA5_PIN};
-// const uint8_t sdaPins2[] = {SDA6_PIN};
-// const uint8_t sdaPins1[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
-// const uint8_t sdaPins2[] = {SDA4_PIN, SDA5_PIN, SDA6_PIN};
-const uint8_t sdaPins1[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN, SDA4_PIN, SDA5_PIN, SDA6_PIN};
-const uint8_t sdaPins2[] = {};
-
-const int pinsCnt1 = sizeof(sdaPins1)/sizeof(sdaPins1[0]);
-const int pinsCnt2 = sizeof(sdaPins2)/sizeof(sdaPins2[0]);
-const int pinsCnt = pinsCnt1 + pinsCnt2;
-
-// -------- I2C helpers ----------
-bool mpuWrite(MultiSDA_I2C &bus, uint8_t sdaPin, uint8_t reg, uint8_t data) {
-  uint8_t buf[2] = {reg, data};
-  return bus.writeBytes(sdaPin, MPU_ADDR, buf, 2, true);
-}
-
-bool mpuRead(MultiSDA_I2C &bus, uint8_t sdaPin, uint8_t reg, uint8_t *buf, size_t len) {
-  if (!bus.writeBytes(sdaPin, MPU_ADDR, &reg, 1, true)) return false;
-  delayMicroseconds(100);
-  return bus.readBytes(sdaPin, MPU_ADDR, buf, len, true);
-}
-
-// -------- quaternion math ----------
+// -------- Quaternion math ----------
 Quaternion quatMultiply(const Quaternion &a, const Quaternion &b) {
   return {
     a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
@@ -138,7 +119,7 @@ Vec3 rotateVec(const Vec3 &v, const Quaternion &q) {
   return {res.x,res.y,res.z};
 }
 
-// -------- cube rendering ----------
+// -------- Cube drawing ----------
 void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
   static const Vec3 verts[8] = {
     {-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
@@ -147,8 +128,7 @@ void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
   static const uint8_t edges[12][2] = {
     {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}
   };
-
-  const float scale = 10.0f;
+  const float scale = 12.0f;
   Vec3 proj[8];
   for (int i=0;i<8;++i){
     Vec3 r = rotateVec(verts[i], q);
@@ -160,42 +140,72 @@ void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
   }
 }
 
+// -------- I2C helpers ----------
+bool mpuWriteMulti(MultiSDA_I2C &bus, uint8_t sdaPin, uint8_t reg, uint8_t data) {
+  uint8_t buf[2] = {reg, data};
+  return bus.writeBytes(sdaPin, MPU_ADDR, buf, 2, true);
+}
+
+bool mpuReadMulti(MultiSDA_I2C &bus, uint8_t sdaPin, uint8_t reg, uint8_t *buf, size_t len) {
+  if (!bus.writeBytes(sdaPin, MPU_ADDR, &reg, 1, true)) return false;
+  delayMicroseconds(100);
+  return bus.readBytes(sdaPin, MPU_ADDR, buf, len, true);
+}
+
+// ---- SoftWire equivalents ----
+bool mpuWriteSoft(SoftWire &bus, uint8_t addr, uint8_t reg, uint8_t data) {
+  bus.beginTransmission(addr);
+  bus.write(reg);
+  bus.write(data);
+  uint8_t res = bus.endTransmission(true);
+  return (res == 0);
+}
+
+bool mpuReadSoft(SoftWire &bus, uint8_t addr, uint8_t reg, uint8_t *buf, size_t len) {
+  bus.beginTransmission(addr);
+  bus.write(reg);
+  if (bus.endTransmission(false) != 0) return false;
+  size_t got = bus.requestFrom(addr, (uint8_t)len);
+  if (got != len) return false;
+  for (size_t i=0;i<len;++i) buf[i] = bus.read();
+  return true;
+}
+
 // -------- setup --------
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // Initialize both I2C buses
-  myI2C1.begin(sdaPins1, pinsCnt1);
-  myI2C2.begin(sdaPins2, pinsCnt2);
+  for (int i=0;i<sensorsTotal;++i) qs[i] = {1,0,0,0};
 
-  // Initialize display
+  myI2C1.begin(sdaPins1, pinsCnt1);
+  softWire.begin();
+  softWire.setClock(50000);
+
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.drawCentreString("Dual I2C: 6x MPU6050 Cubes", 120, 6, 2);
+  tft.drawCentreString("Hybrid I2C: 3xMulti + 1xSoftWire", 120, 6, 2);
 
-  // Wake up sensors on bus 1
   for (uint8_t sda : sdaPins1) {
-    if (mpuWrite(myI2C1, sda, PWR_MGMT_1, 0x00))
-      Serial.printf("MPU (bus1) on SDA %d woke up\n", sda);
-    else
-      Serial.printf("MPU (bus1) on SDA %d failed to wake\n", sda);
+    if (mpuWriteMulti(myI2C1, sda, PWR_MGMT_1, 0x00))
+      Serial.printf("MPU (multi) on SDA %d woke up\n", sda);
+    else {
+      Serial.printf("MPU (multi) on SDA %d failed to wake\n", sda);
+      myI2C1.reinitPin(sda);
+    }
   }
 
-  // Wake up sensors on bus 2
-  for (uint8_t sda : sdaPins2) {
-    if (mpuWrite(myI2C2, sda, PWR_MGMT_1, 0x00))
-      Serial.printf("MPU (bus2) on SDA %d woke up\n", sda);
-    else
-      Serial.printf("MPU (bus2) on SDA %d failed to wake\n", sda);
-  }
+  if (mpuWriteSoft(softWire, MPU_ADDR, PWR_MGMT_1, 0x00))
+    Serial.printf("MPU (SoftWire) on SDA %d woke up\n", SW_SDA);
+  else
+    Serial.printf("MPU (SoftWire) on SDA %d failed to wake\n", SW_SDA);
 
   lastMicros = micros();
 }
 
-// -------- main loop --------
+// -------- loop --------
 void loop() {
   unsigned long now = micros();
   float dt = (now - lastMicros) / 1e6f;
@@ -204,25 +214,20 @@ void loop() {
 
   tft.fillRect(0, 28, 240, 200, TFT_BLACK);
 
-  uint16_t colors[6] = {TFT_ORANGE, TFT_CYAN, TFT_RED, TFT_YELLOW, TFT_GREEN, TFT_BLUE};
+  uint16_t colors[] = {TFT_ORANGE, TFT_CYAN, TFT_RED, TFT_GREEN};
 
-  // --- Read bus 1 sensors (first 3 cubes) ---
+  // --- MultiSDA sensors ---
   for (int i=0; i<pinsCnt1; ++i) {
     uint8_t sda = sdaPins1[i];
     uint8_t buf[14];
-    if (!mpuRead(myI2C1, sda, ACCEL_XOUT_H, buf, 14)) { 
-      Serial.printf("MPU (bus1) on SDA %d no data read\n", sda);
-      // myI2C1.begin(sdaPins1, pinsCnt1);
-        myI2C1.reinitPin(sda);
+    if (!mpuReadMulti(myI2C1, sda, ACCEL_XOUT_H, buf, 14)) {
+      Serial.printf("MPU (multi) on SDA %d no data read\n", sda);
+      myI2C1.reinitPin(sda);
       continue;
     }
 
-    int16_t ax = (buf[0]<<8)|buf[1];
-    int16_t ay = (buf[2]<<8)|buf[3];
-    int16_t az = (buf[4]<<8)|buf[5];
-    int16_t gx = (buf[8]<<8)|buf[9];
-    int16_t gy = (buf[10]<<8)|buf[11];
-    int16_t gz = (buf[12]<<8)|buf[13];
+    int16_t ax=(buf[0]<<8)|buf[1], ay=(buf[2]<<8)|buf[3], az=(buf[4]<<8)|buf[5];
+    int16_t gx=(buf[8]<<8)|buf[9], gy=(buf[10]<<8)|buf[11], gz=(buf[12]<<8)|buf[13];
 
     float axf=ax/16384.0f, ayf=ay/16384.0f, azf=az/16384.0f;
     float gxf=gx/GYRO_SCALE, gyf=gy/GYRO_SCALE, gzf=gz/GYRO_SCALE;
@@ -231,49 +236,34 @@ void loop() {
     Quaternion qAccel = accelToQuat(axf, ayf, azf);
     qs[i] = fuseOrientation(qGyro, qAccel);
 
-    int row = i / pinsCnt1;
-    int col = i % pinsCnt1;
-    int xCenter = 20 + col * 40;
-    int yCenter = 45 + row * 45;
-    // int yCenter = 20 + row * 20;
+    int xCenter = 28 + i * 72;
+    int yCenter = 60;
     drawCube(xCenter, yCenter, qs[i], colors[i]);
   }
 
-  // --- Read bus 2 sensors (next 3 cubes) ---
-  for (int i=0; i<pinsCnt2; ++i) {
-    uint8_t sda = sdaPins2[i];
+  // --- SoftWire sensor ---
+  {
     uint8_t buf[14];
-    if (!mpuRead(myI2C2, sda, ACCEL_XOUT_H, buf, 14)) {
-      Serial.printf("MPU (bus2) on SDA %d no data read\n", sda);
-      // myI2C2.begin(sdaPins2, pinsCnt2);
-        myI2C2.reinitPin(sda);
-      continue;
+    int idx = pinsCnt1;
+    if (!mpuReadSoft(softWire, MPU_ADDR, ACCEL_XOUT_H, buf, 14)) {
+      Serial.printf("MPU (SoftWire) no data read\n");
+      softWire.begin();
+    } else {
+      int16_t ax=(buf[0]<<8)|buf[1], ay=(buf[2]<<8)|buf[3], az=(buf[4]<<8)|buf[5];
+      int16_t gx=(buf[8]<<8)|buf[9], gy=(buf[10]<<8)|buf[11], gz=(buf[12]<<8)|buf[13];
+
+      float axf=ax/16384.0f, ayf=ay/16384.0f, azf=az/16384.0f;
+      float gxf=gx/GYRO_SCALE, gyf=gy/GYRO_SCALE, gzf=gz/GYRO_SCALE;
+
+      Quaternion qGyro = integrateGyro(qs[idx], gxf, gyf, gzf, dt);
+      Quaternion qAccel = accelToQuat(axf, ayf, azf);
+      qs[idx] = fuseOrientation(qGyro, qAccel);
     }
 
-    int idx = i + pinsCnt1;  // shift index
-    int16_t ax = (buf[0]<<8)|buf[1];
-    int16_t ay = (buf[2]<<8)|buf[3];
-    int16_t az = (buf[4]<<8)|buf[5];
-    int16_t gx = (buf[8]<<8)|buf[9];
-    int16_t gy = (buf[10]<<8)|buf[11];
-    int16_t gz = (buf[12]<<8)|buf[13];
-
-    float axf=ax/16384.0f, ayf=ay/16384.0f, azf=az/16384.0f;
-    float gxf=gx/GYRO_SCALE, gyf=gy/GYRO_SCALE, gzf=gz/GYRO_SCALE;
-
-    Quaternion qGyro = integrateGyro(qs[idx], gxf, gyf, gzf, dt);
-    Quaternion qAccel = accelToQuat(axf, ayf, azf);
-    qs[idx] = fuseOrientation(qGyro, qAccel);
-
-    int row = idx / pinsCnt2;
-    int col = idx % pinsCnt2;
-    int xCenter = 40 + col * 80;
-    int yCenter = 45 + row * 45;
-    // int xCenter = 20 + col * 60;
-    // int yCenter = 17 + row * 35;
-    
+    int xCenter = 120;
+    int yCenter = 130;
     drawCube(xCenter, yCenter, qs[idx], colors[idx]);
   }
 
-  // delay(25);
+  delay(20);
 }
