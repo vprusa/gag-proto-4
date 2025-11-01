@@ -45,8 +45,8 @@ void pcaSelectChannel(uint8_t ch) {
 }
 
 // ================= SENSORS =================
-#define NUM_SENSORS 3
-const uint8_t SENSOR_CH[NUM_SENSORS] = {0, 1, 2};
+#define NUM_SENSORS 4
+const uint8_t SENSOR_CH[NUM_SENSORS] = {0, 1, 2, 3};
 MPU6050 mpu[NUM_SENSORS];
 
 float roll_[NUM_SENSORS], pitch_[NUM_SENSORS], yaw_[NUM_SENSORS];
