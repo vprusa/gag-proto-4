@@ -1,285 +1,260 @@
-// Dual MPU6050 -> Quaternion-driven rotating cubes on LilyGo T-Display
-// Requires: MultiSDA_I2C (your bit-banged I2C), TFT_eSPI (configured for TTGO T-Display)
+/**
+ * Six-cube visualization from 3x MPU6050 via PCA9548A on ESP32 (LilyGO T-Display)
+ *
+ * - Uses Jeff Rowberg / Electronic Cats MPU6050 library (getMotion6)
+ * - Draws SIX wireframe cubes across the T-Display (mirrors 3 sensors twice)
+ * - I2C mux channels used: 0,1,2
+ *
+ * Libraries (Arduino Library Manager):
+ *   - MPU6050 by Electronic Cats
+ *   - TFT_eSPI (configure for LilyGO T-Display ST7789 135x240)
+ */
 
-#include <Arduino.h>
+#include <Wire.h>
+#include <MPU6050.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
-#include "MultiSDA_I2C.h"
 #include <math.h>
 
-#define SCL_PIN 21
-#define SDA1_PIN 22
-// #define SDA2_PIN 17
-#define SDA2_PIN 27
-#define SDA3_PIN 17
-// #define SDA3_PIN 26
-#define MPU_ADDR 0x68
+// ================= PIN CONFIG =================
+#define PIN_SCL 21
+#define PIN_SDA 22
+#define PIN_PCA_RST 33
+#define PIN_PCA_A0 25
+#define PIN_PCA_A1 26
+#define PIN_PCA_A2 27
+#define DRIVE_PCA_ADDR_PINS false  // set true ONLY if A0/A1/A2 are actually wired to these pins
 
-#define PWR_MGMT_1 0x6B
-#define ACCEL_XOUT_H 0x3B
+#define PCA9548A_BASE_ADDR 0x70
+uint8_t pca_addr = PCA9548A_BASE_ADDR;
 
-// MultiSDA_I2C myI2C(SCL_PIN, 100, 200);
-// MultiSDA_I2C myI2C(SCL_PIN, 10, 20);`
-// MultiSDA_I2C myI2C(SCL_PIN, 5, 10);
-MultiSDA_I2C myI2C(SCL_PIN, 1, 1);
-TFT_eSPI tft = TFT_eSPI(); // use default setup file for TTGO T-Display
+// ================= PCA9548A HELPERS =================
+void pcaReset() {
+  pinMode(PIN_PCA_RST, OUTPUT);
+  digitalWrite(PIN_PCA_RST, LOW);
+  delay(2);
+  digitalWrite(PIN_PCA_RST, HIGH);
+  delay(2);
+}
 
-// ---- types ----
-struct Quaternion {
-  float w, x, y, z;
+void pcaSelectChannel(uint8_t ch) {
+  Wire.beginTransmission(pca_addr);
+  Wire.write(1 << ch);  // one-hot select
+  Wire.endTransmission();
+  delayMicroseconds(200);
+}
+
+// ================= SENSORS =================
+#define NUM_SENSORS 3
+const uint8_t SENSOR_CH[NUM_SENSORS] = {0, 1, 2};
+MPU6050 mpu[NUM_SENSORS];
+
+float roll_[NUM_SENSORS], pitch_[NUM_SENSORS], yaw_[NUM_SENSORS];
+unsigned long lastT[NUM_SENSORS];
+const float alpha = 0.98f;  // complementary filter gyro weight
+
+// ================= DISPLAY / VIEWS =================
+TFT_eSPI tft = TFT_eSPI();
+
+struct Viewport { int x, y, w, h; };
+
+#define NUM_VIEWS 6  // draw 6 cubes across the screen
+Viewport views[NUM_VIEWS];
+uint16_t bgColor = TFT_BLACK;
+uint16_t fgColor = TFT_WHITE;
+
+// map each view to a sensor index (0,1,2,0,1,2)
+inline uint8_t viewToSensor(uint8_t i){ return i % NUM_SENSORS; }
+
+// ================= 3D CUBE GEOMETRY =================
+const float cubeVerts[8][3] = {
+  {-1,-1,-1},{ 1,-1,-1},{ 1, 1,-1},{-1, 1,-1},
+  {-1,-1, 1},{ 1,-1, 1},{ 1, 1, 1},{-1, 1, 1}
+};
+const uint8_t edges[12][2] = {
+  {0,1},{1,2},{2,3},{3,0},
+  {4,5},{5,6},{6,7},{7,4},
+  {0,4},{1,5},{2,6},{3,7}
 };
 
-struct Vec3 {
-  float x, y, z;
-};
+// ================= MATH / DRAW HELPERS =================
+static inline float deg2rad(float d){ return d * (float)M_PI / 180.0f; }
 
-// ---- constants ----
-const float GYRO_SCALE = 131.0f;   // LSB per deg/s for +/-250dps
-const float ALPHA = 0.98f;         // complementary filter weight
-const float DEG2RAD = PI / 180.0f;
+static inline void rotateRPY(
+  float vx, float vy, float vz, float rDeg, float pDeg, float yDeg,
+  float &ox, float &oy, float &oz
+){
+  // Rotation order: yaw(Z) -> pitch(Y) -> roll(X)
+  float r = deg2rad(rDeg), p = deg2rad(pDeg), y = deg2rad(yDeg);
+  float cr=cosf(r), sr=sinf(r), cp=cosf(p), sp=sinf(p), cy=cosf(y), sy=sinf(y);
 
-// ---- state ----
-Quaternion q1 = {1, 0, 0, 0};
-Quaternion q2 = {1, 0, 0, 0};
-Quaternion q3 = {1, 0, 0, 0};
-unsigned long lastMicros = 0;
-
-// -------- I2C helpers ----------
-bool mpuWrite(uint8_t sdaPin, uint8_t reg, uint8_t data) {
-  uint8_t buf[2] = {reg, data};
-  return myI2C.writeBytes(sdaPin, MPU_ADDR, buf, 2, true);
+  // yaw
+  float x1 = cy*vx - sy*vy;
+  float y1 = sy*vx + cy*vy;
+  float z1 = vz;
+  // pitch
+  float x2 = cp*x1 + sp*z1;
+  float y2 = y1;
+  float z2 = -sp*x1 + cp*z1;
+  // roll
+  ox = x2;
+  oy = cr*y2 - sr*z2;
+  oz = sr*y2 + cr*z2;
 }
 
-bool mpuRead(uint8_t sdaPin, uint8_t reg, uint8_t *buf, size_t len) {
-  if (!myI2C.writeBytes(sdaPin, MPU_ADDR, &reg, 1, true)) return false;
-  // delayMicroseconds(10);
-  // delayMicroseconds(1000);
-  delayMicroseconds(10);
-  return myI2C.readBytes(sdaPin, MPU_ADDR, buf, len, true);
+static inline void projectTo2D(
+  float vx, float vy, float vz, int cx, int cy, float scale, int16_t &sx, int16_t &sy
+){
+  float depth = (vz + 3.0f);
+  float persp = 1.0f / (0.6f + 0.2f*depth);
+  sx = (int16_t)(cx + vx * scale * persp);
+  sy = (int16_t)(cy - vy * scale * persp);
 }
 
-// -------- quaternion math ----------
-Quaternion quatMultiply(const Quaternion &a, const Quaternion &b) {
-  Quaternion r;
-  r.w = a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z;
-  r.x = a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y;
-  r.y = a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x;
-  r.z = a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w;
-  return r;
-}
+static inline void drawCube(int vx, int vy, int vw, int vh, float r, float p, float y) {
+  tft.fillRect(vx, vy, vw, vh, bgColor);
 
-Quaternion quatScale(const Quaternion &q, float s) {
-  return {q.w * s, q.x * s, q.y * s, q.z * s};
-}
+  int cx = vx + vw/2;
+  int cy = vy + vh/2;
+  float scale = (float)min(vw, vh) * 0.32f;  // slightly smaller for narrow columns
 
-Quaternion quatAdd(const Quaternion &a, const Quaternion &b) {
-  return {a.w + b.w, a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-Quaternion quatNormalize(const Quaternion &q) {
-  float n = sqrt(q.w*q.w + q.x*q.x + q.y*q.y + q.z*q.z);
-  if (n < 1e-9f) return {1,0,0,0};
-  return {q.w/n, q.x/n, q.y/n, q.z/n};
-}
-
-// integrate angular velocity (deg/s) into quaternion using quaternion derivative
-Quaternion integrateGyro(const Quaternion &q, float gx_deg, float gy_deg, float gz_deg, float dt) {
-  // convert to radians/s
-  float gx = gx_deg * DEG2RAD;
-  float gy = gy_deg * DEG2RAD;
-  float gz = gz_deg * DEG2RAD;
-
-  // omega quaternion (0, gx, gy, gz)
-  Quaternion omega = {0.0f, gx, gy, gz};
-
-  // dq/dt = 0.5 * q * omega
-  Quaternion q_omega = quatMultiply(q, omega);
-  Quaternion dqdt = quatScale(q_omega, 0.5f);
-
-  // integrate (Euler)
-  Quaternion qNew = quatAdd(q, quatScale(dqdt, dt));
-  return quatNormalize(qNew);
-}
-
-// Build quaternion from roll (x-axis), pitch (y-axis), yaw (z-axis) - radians
-Quaternion quatFromEuler(float roll, float pitch, float yaw) {
-  float cr = cos(roll * 0.5f);
-  float sr = sin(roll * 0.5f);
-  float cp = cos(pitch * 0.5f);
-  float sp = sin(pitch * 0.5f);
-  float cy = cos(yaw * 0.5f);
-  float sy = sin(yaw * 0.5f);
-
-  Quaternion q;
-  q.w = cr * cp * cy + sr * sp * sy;
-  q.x = sr * cp * cy - cr * sp * sy;
-  q.y = cr * sp * cy + sr * cp * sy;
-  q.z = cr * cp * sy - sr * sp * cy;
-  return quatNormalize(q);
-}
-
-// Convert accel vector to approximate quaternion (roll/pitch, yaw unknown -> 0)
-// ax,ay,az expected normalized (g)
-Quaternion accelToQuat(float ax, float ay, float az) {
-  // roll  = atan2(ay, az)
-  // pitch = atan2(-ax, sqrt(ay^2 + az^2))
-  float roll  = atan2(ay, az);
-  float pitch = atan2(-ax, sqrt(ay*ay + az*az));
-  float yaw = 0.0f;
-  return quatFromEuler(roll, pitch, yaw);
-}
-
-// Complementary fuse (simple linear blend on quaternion components then renormalize)
-Quaternion fuseOrientation(const Quaternion &qGyro, const Quaternion &qAccel) {
-  Quaternion q;
-  q.w = ALPHA * qGyro.w + (1.0f - ALPHA) * qAccel.w;
-  q.x = ALPHA * qGyro.x + (1.0f - ALPHA) * qAccel.x;
-  q.y = ALPHA * qGyro.y + (1.0f - ALPHA) * qAccel.y;
-  q.z = ALPHA * qGyro.z + (1.0f - ALPHA) * qAccel.z;
-  return quatNormalize(q);
-}
-
-// rotate vector v by quaternion q
-Vec3 rotateVec(const Vec3 &v, const Quaternion &q) {
-  // v' = q * v_quat * q_conj
-  Quaternion vq = {0.0f, v.x, v.y, v.z};
-  Quaternion qc = {q.w, -q.x, -q.y, -q.z};
-  Quaternion tmp = quatMultiply(q, vq);
-  Quaternion res = quatMultiply(tmp, qc);
-  return {res.x, res.y, res.z};
-}
-
-// -------- rendering cube ----------
-void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
-  static const Vec3 verts[8] = {
-    {-1,-1,-1}, {1,-1,-1}, {1,1,-1}, {-1,1,-1},
-    {-1,-1, 1}, {1,-1, 1}, {1,1, 1}, {-1,1, 1}
-  };
-
-  static const uint8_t edges[12][2] = {
-    {0,1},{1,2},{2,3},{3,0},
-    {4,5},{5,6},{6,7},{7,4},
-    {0,4},{1,5},{2,6},{3,7}
-  };
-
-  const float scale = 24.0f; // cube size
-  Vec3 proj[8];
-  for (int i = 0; i < 8; ++i) {
-    Vec3 r = rotateVec(verts[i], q);
-    // simple orthographic projection (drop z) and center
-    float sx = x0 + r.x * scale;
-    float sy = y0 - r.y * scale; // invert y for screen coordinates
-    proj[i] = { sx, sy, r.z };
+  int16_t sx[8], sy[8];
+  for (int i=0;i<8;i++){
+    float rx, ry, rz;
+    rotateRPY(cubeVerts[i][0], cubeVerts[i][1], cubeVerts[i][2], r, p, y, rx, ry, rz);
+    projectTo2D(rx, ry, rz, cx, cy, scale, sx[i], sy[i]);
   }
 
-  // Draw edges
-  for (int e = 0; e < 12; ++e) {
-    int a = edges[e][0];
-    int b = edges[e][1];
-    tft.drawLine((int)proj[a].x, (int)proj[a].y, (int)proj[b].x, (int)proj[b].y, color);
+  for (int e=0;e<12;e++){
+    uint8_t a=edges[e][0], b=edges[e][1];
+    tft.drawLine(sx[a], sy[a], sx[b], sy[b], fgColor);
   }
 }
 
-// int pinsCnt = 3;
-// const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
-int pinsCnt = 1;
-const uint8_t sdaPins[] = {SDA1_PIN};
+// ================= SENSOR INIT/UPDATE =================
+bool initOneMPU(uint8_t idx) {
+  pcaSelectChannel(SENSOR_CH[idx]);
+  mpu[idx].initialize();
+  if(!mpu[idx].testConnection()) return false;
 
+  lastT[idx] = millis();
+  int16_t ax,ay,az,gx,gy,gz;
+  mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+  float axg=ax/16384.0f, ayg=ay/16384.0f, azg=az/16384.0f;
 
-// -------- setup & loop ----------
+  roll_[idx]  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
+  pitch_[idx] = atan2f(-axg, sqrtf(ayg*ayg+azg*azg)) * 180.0f / (float)M_PI;
+  yaw_[idx]=0.0f;
+  return true;
+}
+
+void updateOneMPU(uint8_t idx) {
+  pcaSelectChannel(SENSOR_CH[idx]);
+  int16_t ax,ay,az,gx,gy,gz;
+  mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+
+  unsigned long now = millis();
+  float dt = (now - lastT[idx]) / 1000.0f;
+  if(dt<=0) dt=0.001f;
+  lastT[idx]=now;
+
+  float axg=ax/16384.0f, ayg=ay/16384.0f, azg=az/16384.0f;
+  float gxds=gx/131.0f,  gyds=gy/131.0f,  gzds=gz/131.0f;
+
+  float roll_gyro =  roll_[idx] + gxds*dt;
+  float pitch_gyro = pitch_[idx] + gyds*dt;
+  float yaw_gyro =   yaw_[idx] + gzds*dt;
+
+  float roll_acc  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
+  float pitch_acc = atan2f(-axg, sqrtf(ayg*ayg+azg*azg)) * 180.0f / (float)M_PI;
+
+  roll_[idx]  = alpha*roll_gyro  + (1.0f-alpha)*roll_acc;
+  pitch_[idx] = alpha*pitch_gyro + (1.0f-alpha)*pitch_acc;
+  yaw_[idx]   = yaw_gyro; // yaw will drift without magnetometer
+
+  if(yaw_[idx] > 180.0f)  yaw_[idx]-=360.0f;
+  if(yaw_[idx] < -180.0f) yaw_[idx]+=360.0f;
+}
+
+// ================= ARDUINO SETUP/LOOP =================
 void setup() {
   Serial.begin(115200);
-  delay(200);
 
+  if(DRIVE_PCA_ADDR_PINS){
+    pinMode(PIN_PCA_A0,OUTPUT);
+    pinMode(PIN_PCA_A1,OUTPUT);
+    pinMode(PIN_PCA_A2,OUTPUT);
+    digitalWrite(PIN_PCA_A0,LOW);
+    digitalWrite(PIN_PCA_A1,LOW);
+    digitalWrite(PIN_PCA_A2,LOW);
+    // If you change these HIGH/LOW, update pca_addr accordingly (0x70..0x77)
+  }
 
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN}; int pinsCnt = 3; myI2C.begin(sdaPins, pinsCnt);
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN};  int pinsCnt = 2; myI2C.begin(sdaPins, pinsCnt);
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN}; myI2C.begin(sdaPins, pinsCnt);
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN}; myI2C.begin(sdaPins, pinsCnt);
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN}; myI2C.begin(sdaPins, pinsCnt);
-  myI2C.begin(sdaPins, pinsCnt);
+  Wire.begin(PIN_SDA, PIN_SCL, 400000); // 400kHz I2C
+  pcaReset();
 
   tft.init();
-  tft.setRotation(1); // landscape
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.drawCentreString("Dual MPU6050 3D Cubes", 120, 6, 2);
+  tft.setRotation(1);              // 240x135 landscape
+  tft.fillScreen(bgColor);
+  tft.setTextColor(fgColor, bgColor);
+  tft.setTextFont(2);
 
-  // Wake-up sensors
-  for (uint8_t sda : sdaPins) {
-    if (mpuWrite(sda, PWR_MGMT_1, 0x00)) {
-      Serial.printf("MPU on SDA %d woke up\n", sda);
-    } else {
-      Serial.printf("MPU on SDA %d failed to wake\n", sda);
-    }
+  // Lay out 6 columns with padding
+  int pad = 3;                      // tighter padding so 6 fit nicely
+  int W = tft.width();              // 240
+  int H = tft.height();             // 135
+  int colW = (W - pad * (NUM_VIEWS + 1)) / NUM_VIEWS;
+  for (int i = 0; i < NUM_VIEWS; ++i) {
+    int x = pad + i * (colW + pad);
+    views[i] = { x, pad, colW, H - 2 * pad };
   }
 
-  lastMicros = micros();
+  tft.drawString("MPU6050 x3 via PCA9548A", W/2, 10);
+
+  // Initialize sensors on channels 0..2
+  for(uint8_t i=0;i<NUM_SENSORS;i++){
+    if(!initOneMPU(i)){
+      // paint all views mapped to this sensor in red as an error
+      for(uint8_t v=0; v<NUM_VIEWS; ++v){
+        if(viewToSensor(v)==i){
+          tft.fillRect(views[v].x, views[v].y, views[v].w, views[v].h, TFT_RED);
+          tft.setTextColor(TFT_WHITE, TFT_RED);
+          tft.drawString("MPU FAIL", views[v].x+views[v].w/2, views[v].y+views[v].h/2);
+          tft.setTextColor(fgColor, bgColor);
+        }
+      }
+    }
+  }
 }
 
-int screenWidth = 240;
-
 void loop() {
-  // const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, };
-  unsigned long now = micros();
-  float dt = (now - lastMicros) / 1e6f;
-  if (dt <= 0) dt = 0.001f;
-  lastMicros = now;
-
-  // Clear the cube drawing area
-  tft.fillRect(0, 28, screenWidth, 200, TFT_BLACK);
-  // tft.fillScreen(TFT_BLACK);
-
-  for (int i = 0; i < pinsCnt; ++i) {
-    uint8_t sda = sdaPins[i];
-    uint8_t buf[14];
-    if (!mpuRead(sda, ACCEL_XOUT_H, buf, 14)) {
-      Serial.printf("MPU SDA %d read error\n", sda);
-      continue;
-    }
-
-    int16_t ax = (buf[0] << 8) | buf[1];
-    int16_t ay = (buf[2] << 8) | buf[3];
-    int16_t az = (buf[4] << 8) | buf[5];
-    int16_t gx = (buf[8] << 8) | buf[9];
-    int16_t gy = (buf[10] << 8) | buf[11];
-    int16_t gz = (buf[12] << 8) | buf[13];
-
-    float axf = ax / 16384.0f;
-    float ayf = ay / 16384.0f;
-    float azf = az / 16384.0f;
-    float gxf = gx / GYRO_SCALE;
-    float gyf = gy / GYRO_SCALE;
-    float gzf = gz / GYRO_SCALE;
-
-    // integrate + fuse
-    // Quaternion *qptr = (i == 0) ? &q1 : &q2;
-    Quaternion *qptr = (i == 0) ? &q1 : (i == 1 ? &q2 : &q3);
-    // Quaternion *qptr = (i == 0) ? &q1 : &q2;
-    Quaternion qGyro = integrateGyro(*qptr, gxf, gyf, gzf, dt);
-    Quaternion qAccel = accelToQuat(axf, ayf, azf);
-    *qptr = fuseOrientation(qGyro, qAccel);
-
-    // horizontal positions: left cube (x=70), right cube (x=170)
-    // int xCenter = ((screenWidth / pinsCnt) * i ) + ((2*screenWidth) / pinsCnt);
-    int xCenter = ((screenWidth / pinsCnt) * i ) + 30;
-    int yCenter = 70;
-    // uint16_t color = (i == 0) ? TFT_ORANGE : TFT_CYAN;
-    uint16_t color = (i == 0) ? TFT_ORANGE : ((i == 1) ? TFT_CYAN : TFT_RED);
-    drawCube(xCenter, yCenter, *qptr, color);
-
-    // optional debug text
-    float roll  = atan2(ayf, azf) * (180.0f / PI);
-    float pitch = atan2(-axf, sqrt(ayf*ayf + azf*azf)) * (180.0f / PI);
-    char buftxt[32];
-    snprintf(buftxt, sizeof(buftxt), "S%d R:%5.1f P:%5.1f", i+1, roll, pitch);
-    // tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    // tft.drawString(buftxt, (i == 0) ? 8 : 128, 210, 2);
-    // tft.drawString(buftxt, ((screenWidth / pinsCnt) * i) + 30, 210, 2);
-
-    Serial.printf("S%d ax=%.2f ay=%.2f az=%.2f gx=%.2f gy=%.2f gz=%.2f q=(%.3f,%.3f,%.3f,%.3f)\n",
-                  i+1, axf, ayf, azf, gxf, gyf, gzf, qptr->w, qptr->x, qptr->y, qptr->z);
+  // Update each of the 3 sensors once per frame
+  for (uint8_t s = 0; s < NUM_SENSORS; ++s) {
+    updateOneMPU(s);
   }
 
-  delay(25);
+  // Use smaller font for narrow headers
+  tft.setTextFont(1);
+
+  // Draw 6 mirrored views (0,1,2,0,1,2)
+  for (uint8_t i = 0; i < NUM_VIEWS; ++i) {
+    uint8_t s = viewToSensor(i);
+
+    // Header bar per view
+    tft.fillRect(views[i].x, views[i].y, views[i].w, 12, TFT_DARKGREY);
+    tft.setTextColor(TFT_WHITE, TFT_DARKGREY);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "V%u CH%u R%+.0f P%+.0f Y%+.0f", i, (unsigned)s, roll_[s], pitch_[s], yaw_[s]);
+    tft.drawString(buf, views[i].x + views[i].w/2, views[i].y + 6);
+    tft.setTextColor(fgColor, bgColor);
+
+    // Cube area
+    int vx = views[i].x;
+    int vy = views[i].y + 14;
+    int vw = views[i].w;
+    int vh = views[i].h - 16;
+    drawCube(vx, vy, vw, vh, roll_[s], pitch_[s], yaw_[s]);
+  }
+
+  delay(5);
 }
