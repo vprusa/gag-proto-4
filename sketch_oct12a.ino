@@ -7,8 +7,8 @@
 #include "MultiSDA_I2C.h"
 #include <math.h>
 
-#define SCL_PIN 22
-#define SDA1_PIN 21
+#define SCL_PIN 21
+#define SDA1_PIN 22
 // #define SDA2_PIN 17
 #define SDA2_PIN 27
 #define SDA3_PIN 17
@@ -19,7 +19,7 @@
 #define ACCEL_XOUT_H 0x3B
 
 // MultiSDA_I2C myI2C(SCL_PIN, 100, 200);
-// MultiSDA_I2C myI2C(SCL_PIN, 10, 20);
+// MultiSDA_I2C myI2C(SCL_PIN, 10, 20);`
 // MultiSDA_I2C myI2C(SCL_PIN, 5, 10);
 MultiSDA_I2C myI2C(SCL_PIN, 1, 1);
 TFT_eSPI tft = TFT_eSPI(); // use default setup file for TTGO T-Display
@@ -180,8 +180,10 @@ void drawCube(int x0, int y0, const Quaternion &q, uint16_t color) {
   }
 }
 
-int pinsCnt = 3;
-const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
+// int pinsCnt = 3;
+// const uint8_t sdaPins[] = {SDA1_PIN, SDA2_PIN, SDA3_PIN};
+int pinsCnt = 1;
+const uint8_t sdaPins[] = {SDA1_PIN};
 
 
 // -------- setup & loop ----------
