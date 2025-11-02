@@ -17,7 +17,7 @@
  */
 
 #include <Wire.h>
-#include <MPU6050.h>
+#include <MPU6050.h>  // for finger sensors (channels > 0)
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <math.h>
@@ -54,11 +54,16 @@ void pcaSelectChannel(uint8_t ch) {
 }
 
 // ================= SENSORS =================
-// List the active mux channels that actually have an MPU6050 connected.
-// You originally used the first three channels: 0,1,2. Extend if you add more.
-const uint8_t ACTIVE_CHANNELS[] = {0,1,2,3,4,5,6};
+// Wrist uses an MPU9250 on the first mux channel.
+// Fingers use MPU6050 on subsequent channels.
+const uint8_t ACTIVE_CHANNELS[] = {0,1,2}; // expand if you add more sensors
 const uint8_t NUM_SENSORS = sizeof(ACTIVE_CHANNELS)/sizeof(ACTIVE_CHANNELS[0]);
-MPU6050 mpu[NUM_SENSORS];
+
+// I2C addresses
+#define MPU9250_ADDR 0x68   // typical
+#define MPU6050_ADDR 0x68
+
+MPU6050 mpu[NUM_SENSORS];   // we won't use index 0 (wrist) with this class
 
 float roll_[NUM_SENSORS], pitch_[NUM_SENSORS], yaw_[NUM_SENSORS];
 unsigned long lastT[NUM_SENSORS];
@@ -140,8 +145,59 @@ static inline void drawRayPolar(int x0, int y0, float angleDeg, float length, ui
 }
 
 // ================= SENSOR INIT/UPDATE =================
+// ---- Minimal I2C helpers for MPU9250 (wrist) ----
+static inline void i2cWriteByte(uint8_t addr, uint8_t reg, uint8_t val){
+  Wire.beginTransmission(addr); Wire.write(reg); Wire.write(val); Wire.endTransmission();
+}
+static inline void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t n, uint8_t* dst){
+  Wire.beginTransmission(addr); Wire.write(reg); Wire.endTransmission(false);
+  Wire.requestFrom((int)addr, (int)n);
+  for(uint8_t i=0;i<n && Wire.available();++i) dst[i]=Wire.read();
+}
+
+// Initialize MPU9250 (only accel+gyro used)
+bool initMPU9250_Wrist(){
+  // On mux ch 0
+  pcaSelectChannel(ACTIVE_CHANNELS[0]);
+  // Reset device
+  i2cWriteByte(MPU9250_ADDR, 0x6B, 0x80); // PWR_MGMT_1 reset
+  delay(100);
+  i2cWriteByte(MPU9250_ADDR, 0x6B, 0x01); // clock = PLL, wake
+  i2cWriteByte(MPU9250_ADDR, 0x6C, 0x00); // PWR_MGMT_2 enable all axes
+  i2cWriteByte(MPU9250_ADDR, 0x1B, 0x00); // GYRO_CONFIG ±250 dps
+  i2cWriteByte(MPU9250_ADDR, 0x1C, 0x00); // ACCEL_CONFIG ±2 g
+  i2cWriteByte(MPU9250_ADDR, 0x1D, 0x03); // CONFIG DLPF ~44Hz
+  i2cWriteByte(MPU9250_ADDR, 0x19, 0x07); // SMPLRT_DIV (1kHz/(1+7)=125Hz)
+  // Prime
+  lastT[0] = millis();
+  uint8_t buf[14]; i2cReadBytes(MPU9250_ADDR, 0x3B, 14, buf);
+  int16_t ax = (buf[0]<<8)|buf[1];
+  int16_t ay = (buf[2]<<8)|buf[3];
+  int16_t az = (buf[4]<<8)|buf[5];
+  float axg=ax/16384.0f, ayg=ay/16384.0f, azg=az/16384.0f;
+  roll_[0]  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
+  pitch_[0] = atan2f(-axg, sqrtf(ayg*ayg+azg*azg)) * 180.0f / (float)M_PI;
+  yaw_[0]   = 0.0f; // mag not used here, yaw will drift
+  return true; // we assume present; for robustness you can add WHO_AM_I check (0x71)
+}
+
+void readMPU9250_Wrist(int16_t &ax,int16_t &ay,int16_t &az,int16_t &gx,int16_t &gy,int16_t &gz){
+  pcaSelectChannel(ACTIVE_CHANNELS[0]);
+  uint8_t buf[14]; i2cReadBytes(MPU9250_ADDR, 0x3B, 14, buf);
+  ax = (buf[0]<<8)|buf[1];
+  ay = (buf[2]<<8)|buf[3];
+  az = (buf[4]<<8)|buf[5];
+  // skip temp (buf[6],buf[7])
+  gx = (buf[8]<<8)|buf[9];
+  gy = (buf[10]<<8)|buf[11];
+  gz = (buf[12]<<8)|buf[13];
+}
+
 bool initOneMPU(uint8_t idx) {
-  // idx indexes into ACTIVE_CHANNELS & arrays
+  if(idx==0){
+    return initMPU9250_Wrist();
+  }
+  // idx indexes into ACTIVE_CHANNELS & arrays (finger sensors)
   pcaSelectChannel(ACTIVE_CHANNELS[idx]);
   mpu[idx].initialize();
   if(!mpu[idx].testConnection()) return false;
@@ -150,7 +206,6 @@ bool initOneMPU(uint8_t idx) {
   int16_t ax,ay,az,gx,gy,gz;
   mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
   float axg=ax/16384.0f, ayg=ay/16384.0f, azg=az/16384.0f;
-
   roll_[idx]  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
   pitch_[idx] = atan2f(-axg, sqrtf(ayg*ayg+azg*azg)) * 180.0f / (float)M_PI;
   yaw_[idx]=0.0f;
@@ -158,9 +213,13 @@ bool initOneMPU(uint8_t idx) {
 }
 
 void updateOneMPU(uint8_t idx) {
-  pcaSelectChannel(ACTIVE_CHANNELS[idx]);
   int16_t ax,ay,az,gx,gy,gz;
-  mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+  if(idx==0){
+    readMPU9250_Wrist(ax,ay,az,gx,gy,gz);
+  } else {
+    pcaSelectChannel(ACTIVE_CHANNELS[idx]);
+    mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+  }
 
   unsigned long now = millis();
   float dt = (now - lastT[idx]) / 1000.0f;
@@ -193,7 +252,7 @@ void drawHandPivotModel(){
 
   // Wrist pivot in red
   const int wristX = W/2 - 10;
-  const int wristY = H/2 + 10;
+  const int wristY = H/2 + 0;
   tft.fillCircle(wristX, wristY, 4, COL_WRIST);
 
   // Wrist orientation (for relative mode)
