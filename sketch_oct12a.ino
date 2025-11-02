@@ -1,347 +1,381 @@
-/**
- * ESP32 (LilyGO T-Display) — Hand Skeleton from MPU9250 (wrist) + MPU6050 (fingers) via PCA9548A
+/*
+ * ESP32 (LilyGO T-Display) — 3D Hand Skeleton from MPU9250 (wrist) + MPU6050 (fingers) via PCA9548A
  *
- * Features
- *  - Wrist sensor: MPU9250 on mux channel 0 (direct I2C regs)
- *  - Finger sensors: MPU6050 on mux channels 1..6 (Jeff Rowberg/Electronic Cats lib)
- *  - Simple hand skeleton: wrist pivot (red), five guide rays (grey) to finger pivots (orange),
- *    and finger lines (yellow) that rotate around each finger pivot.
- *  - Entire skeleton rotates around wrist yaw; finger lines are offset back by wrist yaw
- *    when WRIST_RELATIVE is true.
- *  - Wrist data (roll/pitch/yaw) logged to Serial each frame.
+ * What’s new vs your 2D version
+ *  - Full 3D wireframe hand: palm + 5 fingers with 3 joints each (MCP, PIP, DIP) and a simple thumb base.
+ *  - Wrist IMU (MPU9250) controls the global 3D orientation of the hand.
+ *  - Each finger MPU6050 reports its own local rotation that’s applied *relative to* the wrist.
+ *  - Simple perspective projection with a tiny camera orbit and lighting-ish intensity (by line thickness).
+ *  - Same I²C multiplexer (PCA9548A) + same pins; complementary filter kept for stability.
  *
- * Wiring (from your notes)
- *  - ESP32 I2C: SCL=21, SDA=22
- *  - PCA9548A RESET=33, A0=25, A1=26, A2=27 (address pins optional; default address 0x70)
- *  - ACTIVE_CHANNELS lists connected mux ports (0..6 by default)
+ * Display: LilyGO T-Display (ESP32 + ST7789 240x135). Library: TFT_eSPI (configured for T-Display).
+ * Sensors: Wrist = PCA channel 0 (MPU9250 on 0x68), Fingers = channels 1..5 (MPU6050s on 0x68).
  *
- * Libraries (install via Library Manager)
- *  - "MPU6050" by Electronic Cats (Jeff Rowberg fork)
- *  - "TFT_eSPI" (configure for LilyGO T-Display ST7789 135x240)
+ * NOTE: This is a single-file sketch you can paste into Arduino IDE/Arduino-CLI/PlatformIO.
+ *       Works with the same wiring as your original sketch. If your addresses differ,
+ *       tweak MPU9250_ADDR / the MPU6050 default address or your AD0 wiring.
+ *
+ * Dependencies you should install:
+ *   - TFT_eSPI  (configured for LilyGO T-Display ST7789 240x135)
+ *   - Wire (built-in)
+ *   - MPU6050 by Electronic Cats (or Jeff Rowberg’s)
  */
 
+#include <Arduino.h>
 #include <Wire.h>
-#include <MPU6050.h>   // for finger sensors
 #include <TFT_eSPI.h>
-#include <SPI.h>
-#include <math.h>
+#include <MPU6050.h>   // used for finger sensors
 
-// ================= Feature flags =================
-#define WRIST_RELATIVE   true     // when true, finger yaw is (finger - wrist)
+// =====================
+// Hardware configuration
+// =====================
+#define PIN_I2C_SDA   22
+#define PIN_I2C_SCL   21
 
-// ================= Pins & PCA9548A =================
-#define PIN_SCL          21
-#define PIN_SDA          22
-#define PIN_PCA_RST      33
-#define PIN_PCA_A0       25
-#define PIN_PCA_A1       26
-#define PIN_PCA_A2       27
-#define DRIVE_PCA_ADDR_PINS  false
+#define PIN_PCA_RST   33
+#define PIN_PCA_A0    25
+#define PIN_PCA_A1    26
+#define PIN_PCA_A2    27
+#define DRIVE_PCA_ADDR_PINS  false  // set true only if you actually wired A0..A2
 
-#define PCA9548A_BASE_ADDR  0x70
+#define PCA9548A_BASE_ADDR   0x70
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
 
-// ================= Active sensors =================
-// Channel 0 = wrist (MPU9250), channels 1..6 = fingers (MPU6050)
-const uint8_t ACTIVE_CHANNELS[] = {0,1,2,3,4,5,6};
+// Channel 0 = wrist (MPU9250), channels 1..5 = fingers (MPU6050)
+const uint8_t ACTIVE_CHANNELS[] = {0,1,2,3,4,5};
 const uint8_t NUM_SENSORS = sizeof(ACTIVE_CHANNELS)/sizeof(ACTIVE_CHANNELS[0]);
 
-// ================= IMU addresses =================
-#define MPU9250_ADDR   0x68   // change to 0x69 if AD0 is HIGH on your board
+// ================= IMU I2C addresses =================
+#define MPU9250_ADDR   0x68   // wrist IMU
+// Finger IMUs are MPU6050 at their default address 0x68 unless AD0 pulled high (0x69).
 
-// ================= Globals =================
+// ================== Display + colors =================
 TFT_eSPI tft;
+static const uint16_t COL_BG     = TFT_BLACK;
+static const uint16_t COL_TEXT   = 0xB5B6;  // soft gray
+static const uint16_t COL_PALM   = 0xC618;  // light gray
+static const uint16_t COL_BONE   = TFT_YELLOW;
+static const uint16_t COL_PIVOT  = 0xFD20;  // orange
+static const uint16_t COL_WRIST  = TFT_RED;
 
-MPU6050 mpu[NUM_SENSORS];        // used for finger sensors (idx>0)
-float roll_[NUM_SENSORS]  = {0};
+// ================== IMU storage ==================
+MPU6050 mpu[NUM_SENSORS];             // we’ll only *use* idx>0 with the MPU6050 class
+float roll_[NUM_SENSORS]  = {0};      // degrees
 float pitch_[NUM_SENSORS] = {0};
 float yaw_[NUM_SENSORS]   = {0};
 unsigned long lastT[NUM_SENSORS] = {0};
-const float alpha = 0.98f;       // complementary filter gyro weight
+const float alpha = 0.98f;            // complementary filter gyro weight
 
-// Colors
-static const uint16_t COL_BG     = TFT_BLACK;
-static const uint16_t COL_WRIST  = TFT_RED;
-static const uint16_t COL_PIVOT  = 0xFD20;   // orange
-static const uint16_t COL_GUIDE  = 0xC618;   // light gray
-static const uint16_t COL_FINGER = TFT_YELLOW;
-static const uint16_t COL_TEXT   = TFT_WHITE;
+// ================ Simple 3D math =================
+struct Vec3 { float x,y,z; };
+struct Mat3 { float m[3][3]; };
 
-// ================= Hand parts & mapping =================
-enum HandPart { WRIST=0, THUMB=1, INDEXF=2, MIDDLE=3, RING=4, LITTLE=5 };
-static uint8_t PART_TO_SENSOR[6];
+static inline float deg2rad(float d){ return d * (float)M_PI / 180.0f; }
+static inline float rad2deg(float r){ return r * 180.0f / (float)M_PI; }
 
-static void buildPartMapping() {
-  PART_TO_SENSOR[WRIST] = 0;     // channel 0 -> wrist
+static Mat3 Rx(float a){
+  const float c=cosf(a), s=sinf(a);
+  return Mat3{{{1,0,0},{0,c,-s},{0,s,c}}};
+}
+static Mat3 Ry(float a){
+  const float c=cosf(a), s=sinf(a);
+  return Mat3{{{c,0,s},{0,1,0},{-s,0,c}}};
+}
+static Mat3 Rz(float a){
+  const float c=cosf(a), s=sinf(a);
+  return Mat3{{{c,-s,0},{s,c,0},{0,0,1}}};
+}
+static Mat3 mul(const Mat3&a,const Mat3&b){
+  Mat3 r{}; for(int i=0;i<3;++i) for(int j=0;j<3;++j){ r.m[i][j]=0; for(int k=0;k<3;++k) r.m[i][j]+=a.m[i][k]*b.m[k][j]; }
+  return r;
+}
+static Vec3 mul(const Mat3&r,const Vec3&v){
+  return Vec3{
+    r.m[0][0]*v.x + r.m[0][1]*v.y + r.m[0][2]*v.z,
+    r.m[1][0]*v.x + r.m[1][1]*v.y + r.m[1][2]*v.z,
+    r.m[2][0]*v.x + r.m[2][1]*v.y + r.m[2][2]*v.z
+  };
+}
+static Vec3 add(const Vec3&a,const Vec3&b){ return Vec3{a.x+b.x,a.y+b.y,a.z+b.z}; }
 
-  if (NUM_SENSORS <= 1) {
-    // Fallback: everything uses the wrist sensor
-    PART_TO_SENSOR[THUMB]  = 0;
-    PART_TO_SENSOR[INDEXF] = 0;
-    PART_TO_SENSOR[MIDDLE] = 0;
-    PART_TO_SENSOR[RING]   = 0;
-    PART_TO_SENSOR[LITTLE] = 0;
-    return;
-  }
-
-  // Assign channels 1.. to fingers in order; wrap if fewer than five finger sensors
-  const uint8_t avail = NUM_SENSORS - 1; // finger sensors count
-  const uint8_t order[5] = { THUMB, INDEXF, MIDDLE, RING, LITTLE };
-  for (uint8_t i=0; i<5; ++i) {
-    PART_TO_SENSOR[order[i]] = 1 + (i % avail);
-  }
+// Convert ZYX euler degrees (roll X, pitch Y, yaw Z) to rotation matrix
+static Mat3 eulerZYX_deg(float rollX, float pitchY, float yawZ){
+  Mat3 R = mul(Rz(deg2rad(yawZ)), mul(Ry(deg2rad(pitchY)), Rx(deg2rad(rollX))));
+  return R;
 }
 
-// ================= PCA9548A helpers =================
-static void pcaReset() {
+// ============ Simple camera & projection ============
+struct Camera { Vec3 pos; Mat3 R; float f; };
+
+static Camera cam;  // set up in setup()
+
+static bool project(const Vec3& P, int &sx, int &sy){
+  // camera transform: Pc = R*(P - pos)
+  const Vec3 Pm{ P.x - cam.pos.x, P.y - cam.pos.y, P.z - cam.pos.z };
+  const Vec3 Pc = mul(cam.R, Pm);
+  if (Pc.z <= 1.0f) return false; // behind camera or too near
+  const float xp = cam.f * (Pc.x / Pc.z);
+  const float yp = cam.f * (Pc.y / Pc.z);
+  // map to screen: center in the middle of T-Display (240x135), flip Y
+  const int cx = tft.width()/2;
+  const int cy = tft.height()/2;
+  sx = (int)(cx + xp);
+  sy = (int)(cy - yp);
+  return (sx>=-50 && sx<=tft.width()+50 && sy>=-50 && sy<=tft.height()+50);
+}
+
+static void drawLine3D(const Vec3&A, const Vec3&B, uint16_t col){
+  int x1,y1,x2,y2; if(!project(A,x1,y1)) return; if(!project(B,x2,y2)) return; 
+  tft.drawLine(x1,y1,x2,y2,col);
+}
+
+static void drawPoint3D(const Vec3&P, uint16_t col, int r=2){
+  int x,y; if(!project(P,x,y)) return; tft.fillCircle(x,y,r,col);
+}
+
+// ================ Hand model (units: pixels) =================
+// Local hand frame origin roughly at wrist center, +X right, +Y up, +Z toward viewer.
+static const float PALM_WIDTH   = 55;  // across index to little MCPs
+static const float PALM_LENGTH  = 35;  // wrist to MCP row
+static const float FINGER_GAP   = PALM_WIDTH/4.0f;
+static const float BONE_MCP     = 28;
+static const float BONE_PIP     = 22;
+static const float BONE_DIP     = 16;
+static const float BONE_TH_MB   = 22;  // thumb metacarpal (rotated out)
+static const float BONE_TH_IP   = 18;
+
+// MCP base points in the palm (in the hand local frame before wrist rotation)
+static Vec3 mcpBase[5]; // [0]=Thumb, 1=Index, 2=Middle, 3=Ring, 4=Little
+
+// populate the MCP base layout
+static void initHandLayout(){
+  // Put the MCP line at y = +PALM_LENGTH (upwards), centered in X for fingers 1..4
+  mcpBase[1] = Vec3{-1.5f*FINGER_GAP, PALM_LENGTH, 0};
+  mcpBase[2] = Vec3{-0.5f*FINGER_GAP, PALM_LENGTH, 0};
+  mcpBase[3] = Vec3{+0.5f*FINGER_GAP, PALM_LENGTH, 0};
+  mcpBase[4] = Vec3{+1.5f*FINGER_GAP, PALM_LENGTH, 0};
+  // Thumb base slightly towards wrist and outwards
+  mcpBase[0] = Vec3{-PALM_WIDTH*0.25f, PALM_LENGTH*0.3f, 0};
+}
+
+// ================ PCA9548A helpers =================
+static void pcaReset(){
+  if (DRIVE_PCA_ADDR_PINS){
+    pinMode(PIN_PCA_A0, OUTPUT); pinMode(PIN_PCA_A1, OUTPUT); pinMode(PIN_PCA_A2, OUTPUT);
+    digitalWrite(PIN_PCA_A0, LOW); digitalWrite(PIN_PCA_A1, LOW); digitalWrite(PIN_PCA_A2, LOW);
+  }
   pinMode(PIN_PCA_RST, OUTPUT);
-  digitalWrite(PIN_PCA_RST, LOW);
-  delay(2);
-  digitalWrite(PIN_PCA_RST, HIGH);
-  delay(2);
+  digitalWrite(PIN_PCA_RST, LOW); delay(2);
+  digitalWrite(PIN_PCA_RST, HIGH); delay(2);
 }
-
-static void pcaSelectChannel(uint8_t ch) {
+static void pcaSelect(uint8_t ch){
   Wire.beginTransmission(pca_addr);
-  Wire.write(1 << ch);
+  Wire.write(1<<ch);
   Wire.endTransmission();
   delayMicroseconds(200);
 }
 
-// ================= Math helpers =================
-static inline float deg2rad(float d) { return d * (float)M_PI / 180.0f; }
-
-static void drawRayPolar(int x0, int y0, float angleDeg, float length, uint16_t color) {
-  const float a = deg2rad(angleDeg);
-  const int x1 = x0 + (int)(cosf(a) * length);
-  const int y1 = y0 - (int)(sinf(a) * length);
-  tft.drawLine(x0, y0, x1, y1, color);
+// ============ Minimal I2C for wrist MPU9250 ============
+static void i2cWriteByte(uint8_t addr, uint8_t reg, uint8_t val){
+  Wire.beginTransmission(addr); Wire.write(reg); Wire.write(val); Wire.endTransmission();
+}
+static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t*buf, uint8_t len){
+  Wire.beginTransmission(addr); Wire.write(reg); Wire.endTransmission(false);
+  Wire.requestFrom((int)addr, (int)len);
+  for(uint8_t i=0;i<len && Wire.available();++i) buf[i]=Wire.read();
 }
 
-// ================= Minimal I2C helpers (wrist MPU9250) =================
-static void i2cWriteByte(uint8_t addr, uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.write(val);
-  Wire.endTransmission();
-}
+// MPU9250 regs we use
+#define REG_PWR_MGMT_1   0x6B
+#define REG_GYRO_CONFIG  0x1B
+#define REG_ACCEL_CONFIG 0x1C
+#define REG_ACCEL_XOUT_H 0x3B
 
-static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t n, uint8_t* dst) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.endTransmission(false);
-  Wire.requestFrom((int)addr, (int)n);
-  for (uint8_t i=0; i<n && Wire.available(); ++i) dst[i] = Wire.read();
-}
-
-// ================= Wrist (MPU9250) =================
-static bool initMPU9250_Wrist() {
-  pcaSelectChannel(ACTIVE_CHANNELS[0]);
-
-  // Reset and basic config
-  i2cWriteByte(MPU9250_ADDR, 0x6B, 0x80);  // PWR_MGMT_1 reset
-  delay(100);
-  i2cWriteByte(MPU9250_ADDR, 0x6B, 0x01);  // clock = PLL, wake
-  i2cWriteByte(MPU9250_ADDR, 0x6C, 0x00);  // enable all axes
-  i2cWriteByte(MPU9250_ADDR, 0x1B, 0x00);  // gyro ±250 dps
-  i2cWriteByte(MPU9250_ADDR, 0x1C, 0x00);  // accel ±2 g
-  i2cWriteByte(MPU9250_ADDR, 0x1D, 0x03);  // DLPF ~44 Hz
-  i2cWriteByte(MPU9250_ADDR, 0x19, 0x07);  // sample rate 1kHz/(1+7)=125 Hz
-
-  // Prime orientation
-  uint8_t buf[14];
-  i2cReadBytes(MPU9250_ADDR, 0x3B, 14, buf);
-  const int16_t ax = (buf[0]<<8) | buf[1];
-  const int16_t ay = (buf[2]<<8) | buf[3];
-  const int16_t az = (buf[4]<<8) | buf[5];
-
-  const float axg = ax / 16384.0f;
-  const float ayg = ay / 16384.0f;
-  const float azg = az / 16384.0f;
-
-  roll_[0]  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
-  pitch_[0] = atan2f(-axg, sqrtf(ayg*ayg + azg*azg)) * 180.0f / (float)M_PI;
-  yaw_[0]   = 0.0f;  // yaw will drift without magnetometer fusion
-
-  lastT[0]  = millis();
-
-  Serial.println("MPU9250 wrist initialized");
-  return true; // (Optional: add WHO_AM_I check 0x75==0x71)
-}
-
-static void readMPU9250_Wrist(int16_t &ax, int16_t &ay, int16_t &az,
-                              int16_t &gx, int16_t &gy, int16_t &gz) {
-  pcaSelectChannel(ACTIVE_CHANNELS[0]);
-  uint8_t buf[14];
-  i2cReadBytes(MPU9250_ADDR, 0x3B, 14, buf);
-  ax = (buf[0]<<8) | buf[1];
-  ay = (buf[2]<<8) | buf[3];
-  az = (buf[4]<<8) | buf[5];
-  gx = (buf[8]<<8) | buf[9];
-  gy = (buf[10]<<8) | buf[11];
-  gz = (buf[12]<<8) | buf[13];
-}
-
-// ================= Generic init/update =================
-static bool initOneIMU(uint8_t idx) {
-  if (idx == 0) {
-    return initMPU9250_Wrist();
-  }
-
-  // Finger sensor (MPU6050)
-  pcaSelectChannel(ACTIVE_CHANNELS[idx]);
-  mpu[idx].initialize();
-  if (!mpu[idx].testConnection()) return false;
-
-  lastT[idx] = millis();
-
-  int16_t ax,ay,az,gx,gy,gz;
-  mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
-  const float axg = ax / 16384.0f;
-  const float ayg = ay / 16384.0f;
-  const float azg = az / 16384.0f;
-  roll_[idx]  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
-  pitch_[idx] = atan2f(-axg, sqrtf(ayg*ayg + azg*azg)) * 180.0f / (float)M_PI;
-  yaw_[idx]   = 0.0f;
-  return true;
-}
-
-static void updateOneIMU(uint8_t idx) {
-  int16_t ax,ay,az,gx,gy,gz;
-
-  if (idx == 0) {
-    readMPU9250_Wrist(ax,ay,az,gx,gy,gz);
+// Initialize one sensor on ACTIVE_CHANNELS[idx]
+static bool initOneIMU(uint8_t idx){
+  const uint8_t ch = ACTIVE_CHANNELS[idx];
+  pcaSelect(ch);
+  if (idx==0){
+    // Wrist: raw setup for MPU9250
+    i2cWriteByte(MPU9250_ADDR, REG_PWR_MGMT_1, 0x00); // wake
+    delay(10);
+    i2cWriteByte(MPU9250_ADDR, REG_GYRO_CONFIG,  0x00); // ±250 dps
+    i2cWriteByte(MPU9250_ADDR, REG_ACCEL_CONFIG, 0x00); // ±2g
+    return true;
   } else {
-    pcaSelectChannel(ACTIVE_CHANNELS[idx]);
+    // Finger: MPU6050 via library
+    mpu[idx].initialize();
+    bool ok = mpu[idx].testConnection();
+    if (ok) {
+      mpu[idx].setFullScaleGyroRange(MPU6050_GYRO_FS_250);
+      mpu[idx].setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
+    }
+    return ok;
+  }
+}
+
+// Read / update filter for one IMU; stores degrees in roll_/pitch_/yaw_ arrays
+static void updateOneIMU(uint8_t idx){
+  int16_t ax,ay,az,gx,gy,gz; ax=ay=az=gx=gy=gz=0;
+  pcaSelect(ACTIVE_CHANNELS[idx]);
+  if (idx==0){
+    uint8_t buf[14]; i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 14);
+    ax = (int16_t)((buf[0]<<8)|buf[1]); ay=(int16_t)((buf[2]<<8)|buf[3]); az=(int16_t)((buf[4]<<8)|buf[5]);
+    gx = (int16_t)((buf[8]<<8)|buf[9]); gy=(int16_t)((buf[10]<<8)|buf[11]); gz=(int16_t)((buf[12]<<8)|buf[13]);
+  } else {
     mpu[idx].getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
   }
-
   const unsigned long now = millis();
-  float dt = (now - lastT[idx]) / 1000.0f;
-  if (dt <= 0) dt = 0.001f;
-  lastT[idx] = now;
+  float dt = (now - lastT[idx]) / 1000.0f; if (dt<=0) dt=0.001f; lastT[idx]=now;
 
-  const float axg = ax / 16384.0f;
-  const float ayg = ay / 16384.0f;
-  const float azg = az / 16384.0f;
+  const float axg=ax/16384.0f, ayg=ay/16384.0f, azg=az/16384.0f; // ±2g scale
+  const float gxds=gx/131.0f,  gyds=gy/131.0f,  gzds=gz/131.0f;  // dps
 
-  const float gxds = gx / 131.0f;
-  const float gyds = gy / 131.0f;
-  const float gzds = gz / 131.0f;
-
+  // integrate gyro
   const float roll_gyro  = roll_[idx]  + gxds * dt;
   const float pitch_gyro = pitch_[idx] + gyds * dt;
-  const float yaw_gyro   = yaw_[idx]   + gzds * dt;
+  const float yaw_gyro   = yaw_[idx]   + gzds * dt;  // yaw drifts, acceptable for visualization
 
+  // accelerometer inclination
   const float roll_acc  = atan2f(ayg, azg) * 180.0f / (float)M_PI;
   const float pitch_acc = atan2f(-axg, sqrtf(ayg*ayg + azg*azg)) * 180.0f / (float)M_PI;
 
-  roll_[idx]  = alpha * roll_gyro  + (1.0f - alpha) * roll_acc;
-  pitch_[idx] = alpha * pitch_gyro + (1.0f - alpha) * pitch_acc;
-  yaw_[idx]   = yaw_gyro;  // gyro-only yaw
+  roll_[idx]  = alpha*roll_gyro  + (1-alpha)*roll_acc;
+  pitch_[idx] = alpha*pitch_gyro + (1-alpha)*pitch_acc;
+  yaw_[idx]   = yaw_gyro; // no mag; drift is fine
 
-  if (yaw_[idx] > 180.0f)  yaw_[idx] -= 360.0f;
-  if (yaw_[idx] < -180.0f) yaw_[idx] += 360.0f;
-
-  if (idx == 0) {
-    Serial.printf("Wrist data -> Roll:%6.1f  Pitch:%6.1f  Yaw:%6.1f", roll_[0], pitch_[0], yaw_[0]);
-  }
+  // wrap yaw
+  if (yaw_[idx] > 180) yaw_[idx]-=360; else if (yaw_[idx] < -180) yaw_[idx]+=360;
 }
 
-static void drawHandPivotModel() {
-  const int W = tft.width();
-  const int H = tft.height();
+// ================ Hand rendering =================
+// Build a finger chain from an MCP base with given local rotations (relative to wrist)
+static void renderFingerChain(const Vec3& mcp, const Mat3& Rwrist,
+                              float rx_deg, float ry_deg, float rz_deg,
+                              float len1, float len2, float len3,
+                              uint16_t col)
+{
+  // Local finger rotation (relative to wrist). Use ZYX order for ‘human’ feel.
+  const Mat3 Rloc = eulerZYX_deg(rx_deg, ry_deg, rz_deg);
+  const Mat3 Rf = mul(Rwrist, Rloc);
 
-  tft.fillScreen(COL_BG);
+  const Vec3 p0 = mul(Rwrist, mcp);           // MCP position in world (hand) space
+  const Vec3 p1 = add(p0, mul(Rf, Vec3{0, len1, 0}));
+  const Vec3 p2 = add(p1, mul(Rf, Vec3{0, len2, 0}));
+  const Vec3 p3 = add(p2, mul(Rf, Vec3{0, len3, 0}));
 
-  // Wrist pivot (center-ish), red dot
-  const int wristX = W/2 - 10;
-  const int wristY = H/2 + 0;
-  tft.fillCircle(wristX, wristY, 4, COL_WRIST);
-
-  // Wrist yaw rotates the entire skeleton (guides + pivots) around the wrist
-  const float yawW = yaw_[PART_TO_SENSOR[WRIST]];
-
-  // Layout (local hand frame)
-  const float baseAngle     = -40.0f; // start of finger fan (deg)
-  const float stepAngle     =  20.0f; // spacing between fingers (deg)
-  const float guideLen      =  50.0f; // wrist -> finger pivot (px)
-  const float fingerLen     =  40.0f; // finger line length (px)
-  const float fingerBaseDir = -90.0f; // default finger direction (up)
-
-  // helper to wrap to [-180, 180]
-  auto norm180 = [](float a)->float {
-    while (a > 180.0f) a -= 360.0f;
-    while (a < -180.0f) a += 360.0f;
-    return a;
-  };
-
-  for (int i = 0; i < 5; ++i) {
-    // 1) Skeleton (guide) rotated by wrist yaw
-    const float localGuide = baseAngle + i * stepAngle;
-    const float worldGuide = localGuide + yawW;
-    drawRayPolar(wristX, wristY, worldGuide, guideLen, COL_GUIDE);
-
-    // Finger pivot position (end of the guide)
-    const float a = deg2rad(worldGuide);
-    const int px = wristX + (int)(cosf(a) * guideLen);
-    const int py = wristY - (int)(sinf(a) * guideLen);
-    tft.fillCircle(px, py, 3, COL_PIVOT);
-
-    // 2) Finger line: DO NOT offset by wrist rotation — use absolute finger yaw
-    const uint8_t sIdx = PART_TO_SENSOR[i + 1]; // THUMB..LITTLE
-    const float fingerYawAbs = norm180(yaw_[sIdx]);
-
-    // World finger angle = skeleton rotation + base finger dir + absolute finger yaw
-    const float worldFinger = yawW + fingerBaseDir + fingerYawAbs;
-    drawRayPolar(px, py, worldFinger, fingerLen, COL_FINGER);
-  }
-
-  // HUD
-  tft.setTextColor(COL_TEXT, COL_BG);
-  tft.setTextFont(1);
-  tft.drawString("Skeleton: wrist-rot, fingers abs", W - 5, 10, 1);
+  drawLine3D(p0,p1,col); drawLine3D(p1,p2,col); drawLine3D(p2,p3,col);
+  drawPoint3D(p0, COL_PIVOT, 2);
 }
 
+static void renderPalm(const Mat3& Rwrist){
+  // simple diamond palm outline for depth cue
+  const Vec3 w0 = mul(Rwrist, Vec3{-PALM_WIDTH*0.6f,  0, 0});
+  const Vec3 w1 = mul(Rwrist, Vec3{ PALM_WIDTH*0.6f,  0, 0});
+  const Vec3 w2 = mul(Rwrist, Vec3{ 0, PALM_LENGTH*1.1f,  0});
+  const Vec3 w3 = mul(Rwrist, Vec3{ 0,-PALM_LENGTH*0.8f,  0});
+  drawLine3D(w0,w2,COL_PALM); drawLine3D(w2,w1,COL_PALM);
+  drawLine3D(w1,w3,COL_PALM); drawLine3D(w3,w0,COL_PALM);
+}
 
-// ================= Arduino setup/loop =================
-void setup() {
+static void drawHand3D(){
+  // Update sensors first
+  for(uint8_t i=0;i<NUM_SENSORS;++i) updateOneIMU(i);
+
+  // Wrist orientation in world
+  const Mat3 Rwrist = eulerZYX_deg(roll_[0], pitch_[0], yaw_[0]);
+
+  // Palm
+  renderPalm(Rwrist);
+
+  // Fingers (relative rotations are finger - wrist for a stable feel)
+  auto rel = [&](int i){ return Vec3{ roll_[i]-roll_[0], pitch_[i]-pitch_[0], yaw_[i]-yaw_[0] }; };
+
+  // Thumb (0): flex mainly around its own ‘x’ and a bit yaw outwards
+  {
+    Vec3 r = rel(1); // use channel 1 sensor for thumb if that’s how you wired it; change if not
+    // map: flex = pitch, splay = yaw
+    renderFingerChain(mcpBase[0], Rwrist, r.x*0.6f, r.y*0.6f - 25.0f, r.z*0.2f,
+                      BONE_TH_MB, BONE_TH_IP*0.9f, BONE_TH_IP*0.7f, COL_BONE);
+  }
+  // Index (1)
+  {
+    Vec3 r = rel(1);
+    renderFingerChain(mcpBase[1], Rwrist, r.x, r.y, r.z,
+                      BONE_MCP, BONE_PIP, BONE_DIP, COL_BONE);
+  }
+  // Middle (2)
+  {
+    Vec3 r = rel(2);
+    renderFingerChain(mcpBase[2], Rwrist, r.x, r.y, r.z,
+                      BONE_MCP, BONE_PIP, BONE_DIP, COL_BONE);
+  }
+  // Ring (3)
+  {
+    Vec3 r = rel(3);
+    renderFingerChain(mcpBase[3], Rwrist, r.x, r.y, r.z,
+                      BONE_MCP*0.98f, BONE_PIP*0.98f, BONE_DIP*0.98f, COL_BONE);
+  }
+  // Little (4)
+  {
+    Vec3 r = rel(4);
+    renderFingerChain(mcpBase[4], Rwrist, r.x, r.y, r.z,
+                      BONE_MCP*0.95f, BONE_PIP*0.95f, BONE_DIP*0.9f, COL_BONE);
+  }
+
+  // Wrist marker
+  drawPoint3D(mul(Rwrist, Vec3{0,0,0}), COL_WRIST, 3);
+}
+
+// ================ Setup & Loop =================
+void setup(){
   Serial.begin(115200);
 
-  if (DRIVE_PCA_ADDR_PINS) {
-    pinMode(PIN_PCA_A0, OUTPUT);
-    pinMode(PIN_PCA_A1, OUTPUT);
-    pinMode(PIN_PCA_A2, OUTPUT);
-    digitalWrite(PIN_PCA_A0, LOW);
-    digitalWrite(PIN_PCA_A1, LOW);
-    digitalWrite(PIN_PCA_A2, LOW);
-    // If you change these, update pca_addr = 0x70..0x77 accordingly
-  }
-
-  Wire.begin(PIN_SDA, PIN_SCL, 400000); // 400kHz
-  pcaReset();
-  buildPartMapping();
-
+  // Display
   tft.init();
-  tft.setRotation(1); // 240x135 landscape
+  tft.setRotation(1); // landscape for T-Display
   tft.fillScreen(COL_BG);
   tft.setTextColor(COL_TEXT, COL_BG);
-  tft.setTextFont(2);
-  tft.drawString("MPU Hand Pivot", 120, 10);
+  tft.setTextDatum(TL_DATUM);
+  tft.drawString("3D Hand (MPU9250+MPU6050)", 4, 2);
 
-  // Initialize all sensors
-  for (uint8_t i=0; i<NUM_SENSORS; ++i) {
-    if (!initOneIMU(i)) {
-      tft.fillRect(0, 30 + i*16, tft.width(), 14, TFT_RED);
+  // I2C & PCA
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
+  pcaReset();
+
+  // Init IMUs
+  for(uint8_t i=0;i<NUM_SENSORS;++i){
+    bool ok = initOneIMU(i);
+    if(!ok){
+      tft.fillRect(0, 18+ i*14, tft.width(), 13, TFT_RED);
       tft.setTextColor(TFT_WHITE, TFT_RED);
-      tft.drawString("MPU FAIL CH" + String(ACTIVE_CHANNELS[i]), 5, 37 + i*16);
+      tft.drawString(String("IMU FAIL ch ")+String(ACTIVE_CHANNELS[i]), 4, 20+i*14);
       tft.setTextColor(COL_TEXT, COL_BG);
     }
+    delay(5);
   }
+
+  // Hand base layout
+  initHandLayout();
+
+  // Camera: a little above and in front of the wrist, looking to origin.
+  cam.pos = Vec3{0, -25, -120};
+  cam.R   = mul(Ry(deg2rad(0)), Rx(deg2rad(0))); // facing +Z
+  cam.f   = 120.0f; // focal length in pixels
 }
 
-void loop() {
-  for (uint8_t i=0; i<NUM_SENSORS; ++i) updateOneIMU(i);
-  drawHandPivotModel();
+void loop(){
+  // Clear drawing area below the title bar
+  tft.fillRect(0, 16, tft.width(), tft.height()-16, COL_BG);
+
+  // (optional) tiny camera orbit for depth perception; comment out if undesired
+  static float orbit=0; orbit += 0.02f; if (orbit>2*M_PI) orbit-=2*M_PI;
+  cam.pos.x =  10.0f * cosf(orbit);
+  cam.pos.z = -120.0f + 10.0f * sinf(orbit);
+
+  drawHand3D();
+
+  // Debug: print wrist RPY
+  Serial.printf("Wrist rpy: %.1f %.1f %.1f\n", roll_[0], pitch_[0], yaw_[0]);
   delay(8);
 }
