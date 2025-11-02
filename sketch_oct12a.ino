@@ -247,50 +247,55 @@ static void updateOneIMU(uint8_t idx) {
     Serial.printf("Wrist data -> Roll:%6.1f  Pitch:%6.1f  Yaw:%6.1f", roll_[0], pitch_[0], yaw_[0]);
   }
 }
-
-// ================= Drawing: wrist-rotating skeleton =================
 static void drawHandPivotModel() {
   const int W = tft.width();
   const int H = tft.height();
 
   tft.fillScreen(COL_BG);
 
-  // Wrist pivot centered (x slightly left for label room), red dot
+  // Wrist pivot (centered-ish), red dot
   const int wristX = W/2 - 10;
   const int wristY = H/2 + 0;
   tft.fillCircle(wristX, wristY, 4, COL_WRIST);
 
-  // Wrist yaw defines a global rotation of the entire skeleton
+  // Wrist yaw drives global rotation of the whole skeleton
   const float yawW = yaw_[PART_TO_SENSOR[WRIST]];
 
-  // Layout parameters
-  const float baseAngle      = -40.0f; // local start angle for thumb ray
-  const float stepAngle      =  20.0f; // spacing between finger rays
-  const float guideLen       =  50.0f; // wrist->finger pivot
-  const float fingerLen      =  40.0f; // finger line length
-  const float fingerBaseDir  = -90.0f; // default finger direction (up)
+  // Layout (local hand frame)
+  const float baseAngle     = -40.0f; // start of finger fan (deg)
+  const float stepAngle     =  20.0f; // spacing (deg)
+  const float guideLen      =  50.0f; // wrist -> finger pivot (px)
+  const float fingerLen     =  40.0f; // finger line length (px)
+  const float fingerBaseDir = -90.0f; // default finger direction (up)
 
-  for (int i=0; i<5; ++i) {
-    // 1) Skeleton (guide) rotated by wrist yaw
+  // small helper to wrap angles into [-180, 180]
+  auto norm180 = [](float a) -> float {
+    while (a > 180.0f) a -= 360.0f;
+    while (a < -180.0f) a += 360.0f;
+    return a;
+  };
+
+  for (int i = 0; i < 5; ++i) {
+    // 1) Rotate the skeleton (guides + pivots) by wrist yaw
     const float localGuide = baseAngle + i * stepAngle;
     const float worldGuide = localGuide + yawW;
-
     drawRayPolar(wristX, wristY, worldGuide, guideLen, COL_GUIDE);
 
-    // Finger pivot at end of guide
+    // Finger pivot position (end of the guide)
     const float a = deg2rad(worldGuide);
     const int px = wristX + (int)(cosf(a) * guideLen);
     const int py = wristY - (int)(sinf(a) * guideLen);
     tft.fillCircle(px, py, 3, COL_PIVOT);
 
-    // 2) Finger line orientation
-    const uint8_t sIdx = PART_TO_SENSOR[i+1]; // THUMB..LITTLE
-    float fingerYaw = yaw_[sIdx];
-    float fingerLocalYaw = WRIST_RELATIVE ? (fingerYaw - yawW) : fingerYaw;
-    if (fingerLocalYaw > 180.0f)  fingerLocalYaw -= 360.0f;
-    if (fingerLocalYaw < -180.0f) fingerLocalYaw += 360.0f;
+    // 2) Finger line: offset BY the wrist rotation, but with the correct sign
+    //    (previous version used fingerYaw - yawW; flip to yawW - fingerYaw)
+    const uint8_t sIdx = PART_TO_SENSOR[i + 1]; // THUMB..LITTLE
+    const float fingerYaw = yaw_[sIdx];
 
-    // World finger angle = skeleton rotation + base finger dir + local finger yaw
+    float fingerLocalYaw = WRIST_RELATIVE ? norm180(yawW - fingerYaw)  // <-- flipped sign
+                                          : fingerYaw;
+
+    // World finger angle = skeleton rotation + base dir + local (relative) finger yaw
     const float worldFinger = yawW + fingerBaseDir + fingerLocalYaw;
     drawRayPolar(px, py, worldFinger, fingerLen, COL_FINGER);
   }
@@ -298,9 +303,11 @@ static void drawHandPivotModel() {
   // HUD
   tft.setTextColor(COL_TEXT, COL_BG);
   tft.setTextFont(1);
-  tft.drawString(WRIST_RELATIVE ? "Skeleton: wrist-rot, fingers rel" : "Skeleton: wrist-rot, fingers abs",
+  tft.drawString(WRIST_RELATIVE ? "Skeleton: wrist-rot, fingers rel (fixed sign)"
+                                : "Skeleton: wrist-rot, fingers abs",
                  W - 5, 10, 1);
 }
+
 
 // ================= Arduino setup/loop =================
 void setup() {
