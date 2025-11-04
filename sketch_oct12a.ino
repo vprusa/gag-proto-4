@@ -37,7 +37,7 @@ const uint8_t NUM_SENSORS = sizeof(ACTIVE_CHANNELS)/sizeof(ACTIVE_CHANNELS[0]);
 
 // ============== Finger→channel mapping (indexes into ACTIVE_CHANNELS)
 // Order: Thumb, Index, Middle, Ring, Little
-uint8_t FINGER_MAP[5] = {1,1,2,3,4}; // change Thumb to 5 if it has its own sensor
+uint8_t FINGER_MAP[5] = {1,2,3,4,5}; // change Thumb to 5 if it has its own sensor
 
 // ============== Options
 #define DRAW_PALM 1
