@@ -109,6 +109,24 @@ static const uint16_t COL_CUBE_D    = TFT_ORANGE;    // GY511 mag
 static const uint16_t COL_ACC       = 0x07FF;        // cyan-ish
 static const uint16_t COL_MOV       = 0xFBE0;        // yellow-ish
 
+
+// ============== Motor test (6 vibration motors)
+// IMPORTANT:
+//   These GPIOs are appropriate as LOGIC/control outputs.
+//   Do NOT power motors directly from ESP32 GPIOs in a production design.
+//   In this sketch they are used as simple HIGH/LOW control lines.
+//
+// Suggested pin order matches ACTIVE_CHANNELS[] order:
+//   [0]=wrist, [1]=thumb, [2]=index, [3]=middle, [4]=ring, [5]=little
+//
+// Best candidate pins on the original LilyGO T-Display, assuming GPIO25/26/27
+// are NOT physically tied to PCA9548A address pins on your hardware:
+//   13, 17, 25, 26, 27, 32
+//
+// If any pin is unavailable on your wiring, replace it with -1 to disable that motor.
+#define ENABLE_MOTOR_TEST 1
+
+
 // ============== IMU addresses
 #define MPU9250_ADDR   0x68  // wrist (IMU)
 #define AK8963_ADDR    0x0C  // MPU9250 magnetometer
@@ -837,6 +855,110 @@ static void drawHUD(){
   drawHudCell(cellW,     cellH,     cellW, cellH, "GY511 M",RgMag,  COL_CUBE_D, (const MotionState*)nullptr);
 }
 
+const uint8_t NUM_SENSORS_MOTOR = NUM_SENSORS - 1;
+
+// static const int8_t MOTOR_PINS[NUM_SENSORS] = {13, 17, 25, 26, 27, 32};
+static const int8_t MOTOR_PINS[NUM_SENSORS_MOTOR] = {17, 2, 15, 13, 12};
+static const bool MOTOR_ACTIVE_HIGH = true;
+
+static const unsigned long MOTOR_ONE_ON_MS  = 500;
+static const unsigned long MOTOR_ONE_OFF_MS = 500;
+static const unsigned long MOTOR_ALL_ON_MS  = 2000;
+static const unsigned long MOTOR_ALL_OFF_MS = 2000;
+
+enum MotorTestPhase : uint8_t {
+  MOTOR_PHASE_ONE_ON = 0,
+  MOTOR_PHASE_ONE_OFF,
+  MOTOR_PHASE_ALL_ON,
+  MOTOR_PHASE_ALL_OFF
+};
+
+static MotorTestPhase motorPhase = MOTOR_PHASE_ONE_ON;
+static uint8_t motorPhaseIndex = 0;
+static unsigned long motorPhaseStartMs = 0;
+
+static void setMotorOutput(uint8_t motorIdx, bool on){
+#if ENABLE_MOTOR_TEST
+  if (motorIdx >= NUM_SENSORS_MOTOR) return;
+  int8_t pin = MOTOR_PINS[motorIdx];
+  if (pin < 0) return;
+  digitalWrite((uint8_t)pin, (on == MOTOR_ACTIVE_HIGH) ? HIGH : LOW);
+#endif
+}
+
+static void setAllMotors(bool on){
+#if ENABLE_MOTOR_TEST
+  for (uint8_t i = 0; i < NUM_SENSORS_MOTOR; ++i){
+    setMotorOutput(i, on);
+  }
+#endif
+}
+
+static void initMotorTest(){
+#if ENABLE_MOTOR_TEST
+  for (uint8_t i = 0; i < NUM_SENSORS_MOTOR; ++i){
+    int8_t pin = MOTOR_PINS[i];
+    if (pin < 0) continue;
+    pinMode((uint8_t)pin, OUTPUT);
+    digitalWrite((uint8_t)pin, (MOTOR_ACTIVE_HIGH ? LOW : HIGH));
+  }
+
+  motorPhase = MOTOR_PHASE_ONE_ON;
+  motorPhaseIndex = 0;
+  motorPhaseStartMs = millis();
+  setAllMotors(false);
+  setMotorOutput(motorPhaseIndex, true);
+#endif
+}
+
+static void updateMotorTest(){
+#if ENABLE_MOTOR_TEST
+  unsigned long now = millis();
+
+  switch (motorPhase){
+    case MOTOR_PHASE_ONE_ON:
+      if (now - motorPhaseStartMs >= MOTOR_ONE_ON_MS){
+        setMotorOutput(motorPhaseIndex, false);
+        motorPhase = MOTOR_PHASE_ONE_OFF;
+        motorPhaseStartMs = now;
+      }
+      break;
+
+    case MOTOR_PHASE_ONE_OFF:
+      if (now - motorPhaseStartMs >= MOTOR_ONE_OFF_MS){
+        ++motorPhaseIndex;
+        if (motorPhaseIndex < NUM_SENSORS_MOTOR){
+          setMotorOutput(motorPhaseIndex, true);
+          motorPhase = MOTOR_PHASE_ONE_ON;
+        } else {
+          setAllMotors(true);
+          motorPhase = MOTOR_PHASE_ALL_ON;
+        }
+        motorPhaseStartMs = now;
+      }
+      break;
+
+    case MOTOR_PHASE_ALL_ON:
+      if (now - motorPhaseStartMs >= MOTOR_ALL_ON_MS){
+        setAllMotors(false);
+        motorPhase = MOTOR_PHASE_ALL_OFF;
+        motorPhaseStartMs = now;
+      }
+      break;
+
+    case MOTOR_PHASE_ALL_OFF:
+      if (now - motorPhaseStartMs >= MOTOR_ALL_OFF_MS){
+        motorPhaseIndex = 0;
+        setAllMotors(false);
+        setMotorOutput(motorPhaseIndex, true);
+        motorPhase = MOTOR_PHASE_ONE_ON;
+        motorPhaseStartMs = now;
+      }
+      break;
+  }
+#endif
+}
+
 // ================= Setup/Loop =================
 void setup(){
   Serial.begin(115200);
@@ -874,6 +996,9 @@ void setup(){
 
   initHandLayout();
 
+  // Init motor test outputs
+  initMotorTest();
+
   // Camera for hand skeleton
   cam.pos = Vec3{0, -20, -140};
   cam.R   = mul(Ry(deg2rad(0)), Rx(deg2rad(0)));
@@ -899,6 +1024,9 @@ void loop(){
   if (orbit > 2*(float)M_PI) orbit -= 2*(float)M_PI;
   cam.pos.x = 8.0f * cosf(orbit);
   cam.pos.z = -140.0f + 8.0f * sinf(orbit);
+
+  // Update motor test sequence
+  updateMotorTest();
 
   // Draw hand skeleton
   drawHand3D();
