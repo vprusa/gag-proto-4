@@ -70,11 +70,14 @@ static uint8_t pca_addr = PCA9548A_BASE_ADDR;
 //   old ch4 -> ch4
 //   old ch5 -> ch5
 // ---------------------
-const uint8_t ACTIVE_CHANNELS[] = {1, 2, 6, 3, 4, 5}; // [0]=wrist, [1..5]=fingers
+// const uint8_t ACTIVE_CHANNELS[] = {1, 2, 6, 3, 4, 5}; // [0]=wrist, [1..5]=fingers
+// const uint8_t ACTIVE_CHANNELS[] = {1, 0, 6, 3, 4, 5}; // [0]=wrist, [1..5]=fingers
+const uint8_t ACTIVE_CHANNELS[] = {1, 0, 7, 3, 4, 5}; // [0]=wrist, [1..5]=fingers
 const uint8_t NUM_SENSORS = sizeof(ACTIVE_CHANNELS)/sizeof(ACTIVE_CHANNELS[0]);
 
 // GY-511 is connected to mux channel 0 (SC0/SD0)
-static const uint8_t CH_GY511 = 0;
+// static const uint8_t CH_GY511 = 0;
+static const uint8_t CH_GY511 = 2;
 
 // ============== Finger→index mapping (indexes into ACTIVE_CHANNELS / roll_/pitch_/yaw_ arrays)
 // Order: Thumb, Index, Middle, Ring, Little
@@ -855,10 +858,11 @@ static void drawHUD(){
   drawHudCell(cellW,     cellH,     cellW, cellH, "GY511 M",RgMag,  COL_CUBE_D, (const MotionState*)nullptr);
 }
 
-const uint8_t NUM_SENSORS_MOTOR = NUM_SENSORS - 1;
+const uint8_t NUM_SENSORS_MOTOR = NUM_SENSORS + 1;
 
 // static const int8_t MOTOR_PINS[NUM_SENSORS] = {13, 17, 25, 26, 27, 32};
-static const int8_t MOTOR_PINS[NUM_SENSORS_MOTOR] = {17, 2, 15, 13, 12};
+// static const int8_t MOTOR_PINS[NUM_SENSORS_MOTOR] = {17, 2, 15, 13, 12};
+static const int8_t MOTOR_PINS[NUM_SENSORS_MOTOR] = {17, 2, 15, 13, 25, 26, 27};
 static const bool MOTOR_ACTIVE_HIGH = true;
 
 static const unsigned long MOTOR_ONE_ON_MS  = 500;
