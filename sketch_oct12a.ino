@@ -37,6 +37,8 @@
 #include "GagOffsetsMerged.h"
 #include "GagTtgoVizMerged.h"
 
+struct Vec3;
+
 #ifndef TFT_ORANGE
 #define TFT_ORANGE 0xFDA0
 #endif
@@ -83,7 +85,7 @@
 #endif
 
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
-#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 1
+#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
 #endif
 
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
@@ -111,9 +113,38 @@
 #define GAG_ENABLE_WRIST_MPU_PROBE_LOG 0
 #endif
 
+#ifndef GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
+#define GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG 0
+#endif
+
+#ifndef GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS
+#define GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS 100
+#endif
+
+#ifndef GAG_ENABLE_MPU_FIFO
+#define GAG_ENABLE_MPU_FIFO 1
+#endif
+
+#ifndef GAG_FIFO_RESET_INTERVAL_MS
+#define GAG_FIFO_RESET_INTERVAL_MS 1
+#endif
+
+#ifndef GAG_ENABLE_FIFO_BOOT_TEST
+#define GAG_ENABLE_FIFO_BOOT_TEST 1
+#endif
+
+#ifndef GAG_MPU6050_FIFO_MAX_BYTES
+#define GAG_MPU6050_FIFO_MAX_BYTES 1024U
+#endif
+
+#ifndef GAG_MPU9250_FIFO_MAX_BYTES
+#define GAG_MPU9250_FIFO_MAX_BYTES 512U
+#endif
+
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
 #define GAG_PRIMARY_WRIST_SENSOR_GY511   1
 #ifndef GAG_PRIMARY_WRIST_SENSOR
+// #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY511
 #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
@@ -175,11 +206,23 @@ static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
 
 static const uint8_t FINGER_MAP[5] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE};
 
+static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
+  return (sensorIdx < 8u) ? (uint8_t)(1u << sensorIdx) : 0u;
+}
+
+// Choose which physical sensors emit corrected quaternions on Serial.
+// Example:
+//   sensorBitMask(SENSOR_THUMB) | sensorBitMask(SENSOR_INDEX) | sensorBitMask(SENSOR_WRIST)
+static uint8_t g_serialQuatLogSensorMask = 0;
+static uint32_t g_lastSerialQuatLogMs = 0;
+
 // =====================
 // Optional vibration motors
 // =====================
 #if GAG_ENABLE_VIBRATION
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
+// static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
+// static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {15, 2, 17, 13, 25, 26, 27};
 static const bool MOTOR_ACTIVE_HIGH = true;
 struct MotorState { bool active = false; uint32_t until_ms = 0; };
 static MotorState g_motorState[SENSOR_COUNT_ALL];
@@ -236,6 +279,7 @@ float roll_[SENSOR_COUNT_ALL]  = {0};
 float pitch_[SENSOR_COUNT_ALL] = {0};
 float yaw_[SENSOR_COUNT_ALL]   = {0};
 unsigned long lastT[SENSOR_COUNT_ALL] = {0};
+unsigned long g_lastFifoResetMs[SENSOR_COUNT_ALL] = {0};
 const float alpha = 0.98f;
 
 bool wristMagOk = false;
@@ -480,6 +524,121 @@ static uint8_t wristMpuAddress() {
   return g_wristMpuAddr;
 }
 
+static uint8_t mpuAddressForSensor(uint8_t sensorIdx) {
+  return (sensorIdx == SENSOR_WRIST) ? wristMpuAddress() : MPU6050_ADDR;
+}
+
+static bool sensorCanUseRotationFifo(uint8_t sensorIdx) {
+  return sensorIdx < SENSOR_COUNT_ALL && sensorIdx != SENSOR_WRIST_AUX && SENSOR_ENABLED[sensorIdx];
+}
+
+static uint16_t fifoMaxBytesForSensor(uint8_t sensorIdx) {
+  return (sensorIdx == SENSOR_WRIST) ? (uint16_t)GAG_MPU9250_FIFO_MAX_BYTES : (uint16_t)GAG_MPU6050_FIFO_MAX_BYTES;
+}
+
+static uint16_t fifoResetThresholdBytesForSensor(uint8_t sensorIdx) {
+  return (uint16_t)(fifoMaxBytesForSensor(sensorIdx) / 2u);
+}
+
+static uint16_t readMpuFifoCountBytes(uint8_t sensorIdx) {
+  if (!sensorCanUseRotationFifo(sensorIdx)) return 0;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  const uint8_t addr = mpuAddressForSensor(sensorIdx);
+  return (uint16_t)(((uint16_t)i2cReadByte(addr, REG_FIFO_COUNT_H) << 8) | i2cReadByte(addr, REG_FIFO_COUNT_L));
+}
+
+static void resetMpuFifo(uint8_t sensorIdx) {
+#if GAG_ENABLE_MPU_FIFO
+  if (!sensorCanUseRotationFifo(sensorIdx)) return;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  const uint8_t addr = mpuAddressForSensor(sensorIdx);
+  i2cWriteByte(addr, REG_USER_CTRL, 0x04);
+  delay(2);
+  i2cWriteByte(addr, REG_USER_CTRL, 0x40);
+  g_lastFifoResetMs[sensorIdx] = millis();
+#else
+  (void)sensorIdx;
+#endif
+}
+
+static void configureMpuFifo(uint8_t sensorIdx) {
+#if GAG_ENABLE_MPU_FIFO
+  if (!sensorCanUseRotationFifo(sensorIdx)) return;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  const uint8_t addr = mpuAddressForSensor(sensorIdx);
+  i2cWriteByte(addr, REG_USER_CTRL, 0x00);
+  i2cWriteByte(addr, REG_FIFO_EN, 0x00);
+  i2cWriteByte(addr, REG_USER_CTRL, 0x04);
+  delay(2);
+  i2cWriteByte(addr, REG_FIFO_EN, 0x78);
+  i2cWriteByte(addr, REG_USER_CTRL, 0x40);
+  g_lastFifoResetMs[sensorIdx] = millis();
+#else
+  (void)sensorIdx;
+#endif
+}
+
+static bool readMpuFifoMotion6(uint8_t sensorIdx, int16_t& ax, int16_t& ay, int16_t& az, int16_t& gx, int16_t& gy, int16_t& gz) {
+#if GAG_ENABLE_MPU_FIFO
+  if (!sensorCanUseRotationFifo(sensorIdx)) return false;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  const uint8_t addr = mpuAddressForSensor(sensorIdx);
+  const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
+  if (fifoCount < 12) return false;
+
+  uint8_t packet[12] = {0};
+  uint16_t remaining = fifoCount;
+  while (remaining >= 12) {
+    i2cReadBytes(addr, REG_FIFO_R_W, packet, 12);
+    remaining = (uint16_t)(remaining - 12);
+  }
+
+  ax = (int16_t)((packet[0] << 8) | packet[1]);
+  ay = (int16_t)((packet[2] << 8) | packet[3]);
+  az = (int16_t)((packet[4] << 8) | packet[5]);
+  gx = (int16_t)((packet[6] << 8) | packet[7]);
+  gy = (int16_t)((packet[8] << 8) | packet[9]);
+  gz = (int16_t)((packet[10] << 8) | packet[11]);
+  return true;
+#else
+  (void)sensorIdx; (void)ax; (void)ay; (void)az; (void)gx; (void)gy; (void)gz;
+  return false;
+#endif
+}
+
+static void maybeResetMpuFifo(uint8_t sensorIdx) {
+#if GAG_ENABLE_MPU_FIFO
+  if (!sensorCanUseRotationFifo(sensorIdx)) return;
+  const uint32_t now = millis();
+  const bool resetByTime = ((uint32_t)(now - g_lastFifoResetMs[sensorIdx]) >= GAG_FIFO_RESET_INTERVAL_MS);
+  const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
+  const bool resetByLevel = (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx));
+  if (resetByTime || resetByLevel) {
+    resetMpuFifo(sensorIdx);
+  }
+#else
+  (void)sensorIdx;
+#endif
+}
+
+static void printMpuFifoBootTestForSensor(uint8_t sensorIdx) {
+#if GAG_ENABLE_FIFO_BOOT_TEST
+  if (!sensorCanUseRotationFifo(sensorIdx)) return;
+  delay(50);
+  int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
+  const bool ok = readMpuFifoMotion6(sensorIdx, ax, ay, az, gx, gy, gz);
+  Serial.printf("FIFO boot test sensor=%u label=%s count=%u max=%u reset_at=%u ok=%u sample={%d,%d,%d,%d,%d,%d}\n",
+                (unsigned)sensorIdx,
+                SENSOR_OFFSET_LABELS[sensorIdx],
+                (unsigned)readMpuFifoCountBytes(sensorIdx),
+                (unsigned)fifoMaxBytesForSensor(sensorIdx),
+                (unsigned)fifoResetThresholdBytesForSensor(sensorIdx),
+                ok ? 1u : 0u,
+                (int)ax, (int)ay, (int)az, (int)gx, (int)gy, (int)gz);
+#else
+  (void)sensorIdx;
+#endif
+}
 
 static void printFifoCapabilityReportForSensor(uint8_t sensorIdx) {
   if (!isSensorEnabled(sensorIdx)) return;
@@ -810,6 +969,33 @@ static uint16_t selectedLogicalWristColor() {
   return SENSOR_COLORS[selectedWristQuaternionPhysicalSensor()];
 }
 
+static void maybeLogSerialSensorQuaternions() {
+#if GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
+  if (g_serialQuatLogSensorMask == 0u) return;
+
+  const uint32_t now = millis();
+  if ((uint32_t)(now - g_lastSerialQuatLogMs) < (uint32_t)GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS) return;
+  g_lastSerialQuatLogMs = now;
+
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!(g_serialQuatLogSensorMask & sensorBitMask(s))) continue;
+
+    if (!physicalSensorQuaternionAvailable(s)) {
+      Serial.printf("quat sensor=%u label=%s available=0\n",
+                    (unsigned)s,
+                    SENSOR_OFFSET_LABELS[s]);
+      continue;
+    }
+
+    const gag::Quaternion q = correctedQuaternionForPhysicalSensor(s);
+    Serial.printf("quat sensor=%u label=%s available=1 w=%.5f x=%.5f y=%.5f z=%.5f\n",
+                  (unsigned)s,
+                  SENSOR_OFFSET_LABELS[s],
+                  q.w, q.x, q.y, q.z);
+  }
+#endif
+}
+
 // =====================
 // GY-511
 // =====================
@@ -958,6 +1144,7 @@ static bool initOneIMU(uint8_t idx){
     i2cWriteByte(wristAddr, REG_PWR_MGMT_1, 0x00); delay(10);
     i2cWriteByte(wristAddr, REG_GYRO_CONFIG, 0x00);
     i2cWriteByte(wristAddr, REG_ACCEL_CONFIG, 0x00);
+    configureMpuFifo(idx);
     return true;
   }
 
@@ -973,6 +1160,7 @@ static bool initOneIMU(uint8_t idx){
     mpu[idx].setXGyroOffset(hw.gx);
     mpu[idx].setYGyroOffset(hw.gy);
     mpu[idx].setZGyroOffset(hw.gz);
+    configureMpuFifo(idx);
   }
   return ok;
 }
@@ -981,27 +1169,31 @@ static void updateOneIMU(uint8_t idx){
   if (!isSensorEnabled(idx)) return;
   if (!isMpuBackedSensor(idx)) return;
   int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
-  pcaSelect(ACTIVE_CHANNELS[idx]);
+  maybeResetMpuFifo(idx);
+
+  bool haveSample = readMpuFifoMotion6(idx, ax, ay, az, gx, gy, gz);
+  if (!haveSample) {
+    pcaSelect(ACTIVE_CHANNELS[idx]);
+    if (idx == SENSOR_WRIST) {
+      uint8_t buf[14] = {0};
+      i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
+      ax = (int16_t)((buf[0]<<8)  | buf[1]);
+      ay = (int16_t)((buf[2]<<8)  | buf[3]);
+      az = (int16_t)((buf[4]<<8)  | buf[5]);
+      gx = (int16_t)((buf[8]<<8)  | buf[9]);
+      gy = (int16_t)((buf[10]<<8) | buf[11]);
+      gz = (int16_t)((buf[12]<<8) | buf[13]);
+    } else {
+      mpu[idx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    }
+  }
 
   if (idx == SENSOR_WRIST) {
-    uint8_t buf[14] = {0};
-    i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
-    ax = (int16_t)((buf[0]<<8)  | buf[1]);
-    ay = (int16_t)((buf[2]<<8)  | buf[3]);
-    az = (int16_t)((buf[4]<<8)  | buf[5]);
-    gx = (int16_t)((buf[8]<<8)  | buf[9]);
-    gy = (int16_t)((buf[10]<<8) | buf[11]);
-    gz = (int16_t)((buf[12]<<8) | buf[13]);
-
-    // Apply the stored 6-component offsets as pre-fusion biases on the raw wrist path.
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
     ax -= hw.ax; ay -= hw.ay; az -= hw.az;
     gx -= hw.gx; gy -= hw.gy; gz -= hw.gz;
-  } else {
-    mpu[idx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-    if (isFingerSensor(idx)) {
-      remapFingerRawAxesToGloveFrame(ax, ay, az, gx, gy, gz);
-    }
+  } else if (isFingerSensor(idx)) {
+    remapFingerRawAxesToGloveFrame(ax, ay, az, gx, gy, gz);
   }
 
   unsigned long now = millis();
@@ -1494,6 +1686,11 @@ void setup() {
 
   wristMagOk = initWristMagAK8963();
   gy511Ok = initGY511();
+#if GAG_ENABLE_FIFO_BOOT_TEST
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    printMpuFifoBootTestForSensor(s);
+  }
+#endif
   #if GAG_ENABLE_FIFO_REPORT
   printFifoCapabilityReport();
   #endif
@@ -1524,7 +1721,7 @@ void setup() {
   g_bleMouse.begin();
 #endif
   initMotors();
-  runStartupVibrationTest();
+  // runStartupVibrationTest();
 
   g_recognizer.begin(Serial);
   g_recognizer.setOnRecognized(onGestureRecognized);
@@ -1542,6 +1739,7 @@ void loop() {
 
   feedRecognizerFromCurrentPose();
   updateVibrations();
+  maybeLogSerialSensorQuaternions();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
