@@ -125,8 +125,14 @@ struct Vec3;
 #define GAG_ENABLE_MPU_FIFO 1
 #endif
 
+#ifndef GAG_ENABLE_MPU9250_FIFO
+#define GAG_ENABLE_MPU9250_FIFO 0
+#endif
+
 #ifndef GAG_FIFO_RESET_INTERVAL_MS
-#define GAG_FIFO_RESET_INTERVAL_MS 1
+// #define GAG_FIFO_RESET_INTERVAL_MS 10
+// #define GAG_FIFO_RESET_INTERVAL_MS 1000
+#define GAG_FIFO_RESET_INTERVAL_MS 100
 #endif
 
 #ifndef GAG_ENABLE_FIFO_BOOT_TEST
@@ -135,10 +141,12 @@ struct Vec3;
 
 #ifndef GAG_MPU6050_FIFO_MAX_BYTES
 #define GAG_MPU6050_FIFO_MAX_BYTES 1024U
+// #define GAG_MPU6050_FIFO_MAX_BYTES 2048U
 #endif
 
 #ifndef GAG_MPU9250_FIFO_MAX_BYTES
 #define GAG_MPU9250_FIFO_MAX_BYTES 512U
+// #define GAG_MPU9250_FIFO_MAX_BYTES 2048U
 #endif
 
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
@@ -529,7 +537,9 @@ static uint8_t mpuAddressForSensor(uint8_t sensorIdx) {
 }
 
 static bool sensorCanUseRotationFifo(uint8_t sensorIdx) {
-  return sensorIdx < SENSOR_COUNT_ALL && sensorIdx != SENSOR_WRIST_AUX && SENSOR_ENABLED[sensorIdx];
+  if (sensorIdx >= SENSOR_COUNT_ALL || sensorIdx == SENSOR_WRIST_AUX || !SENSOR_ENABLED[sensorIdx]) return false;
+  if (sensorIdx == SENSOR_WRIST) return GAG_ENABLE_MPU9250_FIFO;
+  return true;
 }
 
 static uint16_t fifoMaxBytesForSensor(uint8_t sensorIdx) {
