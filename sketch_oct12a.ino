@@ -111,14 +111,14 @@
 #define GAG_ENABLE_WRIST_MPU_PROBE_LOG 0
 #endif
 
-#define GAG_WRIST_QUAT_SOURCE_MPU9250 0
-#define GAG_WRIST_QUAT_SOURCE_GY511   1
-#ifndef GAG_WRIST_QUAT_SOURCE
-#define GAG_WRIST_QUAT_SOURCE GAG_WRIST_QUAT_SOURCE_MPU9250
+#define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
+#define GAG_PRIMARY_WRIST_SENSOR_GY511   1
+#ifndef GAG_PRIMARY_WRIST_SENSOR
+#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
-#if (GAG_WRIST_QUAT_SOURCE != GAG_WRIST_QUAT_SOURCE_MPU9250) &&     (GAG_WRIST_QUAT_SOURCE != GAG_WRIST_QUAT_SOURCE_GY511)
-#error "GAG_WRIST_QUAT_SOURCE must be GAG_WRIST_QUAT_SOURCE_MPU9250 or GAG_WRIST_QUAT_SOURCE_GY511"
+#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) &&     (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
+#error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_MPU9250 or GAG_PRIMARY_WRIST_SENSOR_GY511"
 #endif
 
 // =====================
@@ -699,8 +699,10 @@ static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   return g_offsets.applySoftwareOffset(sensorIdx, minorFixed);
 }
 
+// Select the single wrist sensor used by the hand skeleton and recognizer.
+// Both wrist sensors can still be updated and drawn as separate cubes.
 static uint8_t selectedWristQuaternionPhysicalSensor() {
-#if GAG_WRIST_QUAT_SOURCE == GAG_WRIST_QUAT_SOURCE_GY511
+#if GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_GY511
   return gy511Ok ? SENSOR_WRIST_AUX : SENSOR_WRIST;
 #else
   return SENSOR_WRIST;
@@ -1308,6 +1310,9 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 // =====================
 // Recognizer feed
 // =====================
+// Feed all finger sensors individually, but only one logical wrist source
+// into recognition. The primary wrist source is selected by
+// GAG_PRIMARY_WRIST_SENSOR; both wrist sensors can still be visualized.
 static void feedRecognizerFromCurrentPose() {
   const uint32_t now = millis();
   for (uint8_t s = SENSOR_THUMB; s <= SENSOR_LITTLE; ++s) {
@@ -1339,6 +1344,8 @@ static void feedRecognizerFromCurrentPose() {
 // =====================
 // Visualization input
 // =====================
+// Populate visualization for every physical sensor cube. This is independent
+// from the logical wrist-source selection used by the skeleton and recognizer.
 static gag::viz::FrameInput buildVizFrame() {
   gag::viz::FrameInput frame;
   frame.sensor_count = SENSOR_COUNT_ALL;
