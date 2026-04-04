@@ -242,7 +242,8 @@ bool wristMagOk = false;
 float yawMagWristDeg = 0.0f;
 Vec3 wristMagRaw{0,0,0};
 
-bool gy511Ok = false;
+bool gy511Ok = true;
+bool gy511MagOk = true;
 Vec3 gy511Accel_g{0,0,0};
 Vec3 gy511MagRaw{0,0,0};
 float gy511RollDeg = 0.0f;
@@ -729,9 +730,11 @@ static bool initGY511(){
   i2cWriteByte(LSM_MAG_ADDR, LSM_CRB_REG_M,  0x20); // +/-1.3 gauss
   i2cWriteByte(LSM_MAG_ADDR, LSM_MR_REG_M,   0x00); // continuous
   delay(20);
-  uint8_t who = i2cReadByte(LSM_MAG_ADDR, 0x0A);
+  const uint8_t ctrl1a = i2cReadByte(LSM_ACC_ADDR, LSM_CTRL_REG1_A);
+  const uint8_t who = i2cReadByte(LSM_MAG_ADDR, 0x0A);
+  gy511MagOk = (who == 'H');
   gy511LastT = millis();
-  return (who == 'H');
+  return (ctrl1a == 0x57) || gy511MagOk;
 }
 
 static bool readGY511Accel(Vec3 &accel_g){
@@ -780,16 +783,22 @@ static void remapGy511VectorToGloveFrame(Vec3& v) {
 
 static void updateGY511(){
   if (!gy511Ok) return;
-  Vec3 a, m;
+  Vec3 a;
   if (!readGY511Accel(a)) return;
-  if (!readGY511Mag(m)) return;
   remapGy511VectorToGloveFrame(a);
-  remapGy511VectorToGloveFrame(m);
   gy511Accel_g = a;
-  gy511MagRaw = m;
   gy511RollDeg  = rad2deg(atan2f(a.y, a.z));
   gy511PitchDeg = rad2deg(atan2f(-a.x, sqrtf(a.y*a.y + a.z*a.z)));
-  gy511YawMagDeg = yawFromMagTiltComp(m, gy511RollDeg, gy511PitchDeg);
+
+  if (gy511MagOk) {
+    Vec3 m;
+    if (readGY511Mag(m)) {
+      remapGy511VectorToGloveFrame(m);
+      gy511MagRaw = m;
+      gy511YawMagDeg = yawFromMagTiltComp(m, gy511RollDeg, gy511PitchDeg);
+    }
+  }
+
   gy511LastT = millis();
 }
 
