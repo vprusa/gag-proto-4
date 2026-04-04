@@ -531,9 +531,15 @@ static gag::Quaternion fingerEulerToQuat(uint8_t sensorIdx, float rollDeg, float
   return eulerSensorToQuat(rollDeg, gloveYawDeg, pitchDeg);
 }
 
+static gag::Quaternion wristGy511EulerToQuat(float rollDeg, float pitchDeg, float yawDeg) {
+  // Keep wrist X on roll, but remap wrist-local Y/Z so the GY-511 path lines up
+  // with the visualization frame before mounting compensation is applied.
+  return eulerSensorToQuat(rollDeg, yawDeg, pitchDeg);
+}
+
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
-    return eulerSensorToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
+    return wristGy511EulerToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
   }
   if (sensorIdx == SENSOR_WRIST) {
     const float yawDeg = wristMagOk ? yawMagWristDeg : yaw_[SENSOR_WRIST];
