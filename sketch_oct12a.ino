@@ -433,18 +433,22 @@ static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
 };
 
 // Default per-sensor mounting compensation applied in the sensor's local/body
-// frame before neutral offsets. Finger IMUs are corrected earlier at the raw
-// accel/gyro level so their roll/pitch semantics match the glove frame before
-// quaternion creation. The wrist GY-511 still needs quaternion-frame mounting
-// compensation because it is built from its own accel/mag solution.
+// frame before neutral offsets.
+// Finger IMUs: +90 deg CCW around Z.
+// Wrist GY-511: +90 deg CCW around Z, then -90 deg around X.
+// Wrist MPU9250: +180 deg around Z, then +90 deg around Y.
 static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
-  gag::Quaternion(),
-  gag::Quaternion(),
-  gag::Quaternion(),
-  gag::Quaternion(),
-  gag::Quaternion(),
-  gag::Quaternion(),
-  gag::Quaternion(),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::mul(
+      gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+      gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+      gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
+      gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f)),
 };
 
 // static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
