@@ -94,7 +94,7 @@ struct Vec3;
 
 #ifndef GAG_HW_CALIBRATION_SAMPLE_DELAY_MS
 // #define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 5
-#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 25
+#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 50
 #endif
 
 #ifndef GAG_HW_CALIBRATION_APPLY_UNSTABLE
@@ -377,16 +377,38 @@ unsigned long gy511LastT = 0;
 //   { 270, 2051, 1915, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
 // };
 
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   { 60, 171, -184, 1, 0, 0 }, // thumb
+//   { -47, 80, -204, -2, 1, 1 }, // index
+//   // { 110, 86, -137, 0, 4, 0 }, // middle
+//   { -1275, -1079, 1221, 250, 92, 53 }, // middle
+//   { 0, 0, 0, 0, 0, 0 }, // ring
+//   { 0, 0, 0, 0, 0, 0 }, // little
+//   { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+//   // { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+//   { -2215, -141, 2588, -145, 35, -21 }, // wrist MPU9250
+// };
+
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   { -1602, -847, 2079, 47, -26, 24 }, // thumb
+//   { 1313, -1382, 1813, 142, 21, 20 }, // index
+//   { -306, 222, -392, 2, 4, 0 }, // middle
+//   { 0, 0, 0, 0, 0, 0 }, // ring
+//   { 0, 0, 0, 0, 0, 0 }, // little
+//   { 15, 2369, 2700, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+//   { -2211, -216, 2582, -144, 38, -20 }, // wrist MPU9250
+// };
+
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
-  { 60, 171, -184, 1, 0, 0 }, // thumb
-  { -47, 80, -204, -2, 1, 1 }, // index
-  // { 110, 86, -137, 0, 4, 0 }, // middle
-  { -1275, -1079, 1221, 250, 92, 53 }, // middle
+  // { 138, 243, -392, 1, 0, 0 }, // thumb
+  // { -117, 252, -486, -1, 1, 1 }, // index
+  { -1602, -847, 2079, 47, -26, 24 }, // thumb
+  { 1313, -1382, 1813, 142, 21, 20 }, // index
+  { -1367, -1257, 1421, 250, 92, 52 }, // middle
   { 0, 0, 0, 0, 0, 0 }, // ring
   { 0, 0, 0, 0, 0, 0 }, // little
-  { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
-  // { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
-  { -2215, -141, 2588, -145, 35, -21 }, // wrist MPU9250
+  { -24, 2376, 2781, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+  { -2209, -223, 2590, -145, 38, -19 }, // wrist MPU9250
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -472,14 +494,31 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
 //   gag::Quaternion(0.41486070f, 0.58975530f, -0.53880137f, 0.43562889f), // wrist MPU9250
 // };
 
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   // gag::Quaternion(0.66707754f, -0.69925606f, 0.03005924f, -0.25523528f), // thumb
+//   // gag::Quaternion(0.70189708f, -0.68103540f, 0.09374142f, -0.18639708f), // thumb
+//   gag::Quaternion(0.68471193f, -0.53924060f, 0.45200196f, 0.18995617f), // thumb
+//   // gag::Quaternion(0.72143364f, 0.62782055f, -0.05811472f, -0.28635225f), // index
+//   // gag::Quaternion(0.69317377f, 0.63452041f, -0.03997492f, -0.33955264f), // index
+//   // gag::Quaternion(0.74307454f, 0.60141474f, -0.13865891f, -0.25867793f), // index
+//   gag::Quaternion(0.62933743f, 0.22451355f, -0.68044090f, 0.30087909f), // index
+//   gag::Quaternion(0.75385189f, -0.56104791f, -0.24378021f, -0.23979971f), // middle
+//   gag::Quaternion(), // ring unavailable
+//   gag::Quaternion(), // little unavailable
+//   gag::Quaternion(0.13078532f, -0.28337017f, 0.94948405f, 0.03281225f), // wrist aux (accel-only used in this sketch)
+//   // gag::Quaternion(0.39162835f, 0.60506660f, -0.51878023f, 0.45977041f), // wrist MPU9250
+//   // gag::Quaternion(0.40107992f, 0.60559601f, -0.53276914f, 0.43421829f), // wrist MPU9250
+//   gag::Quaternion(0.76633561f, -0.31313452f, -0.02058225f, 0.56058282f), // wrist MPU9250
+// };
+
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
-  gag::Quaternion(0.66707754f, -0.69925606f, 0.03005924f, -0.25523528f), // thumb
-  gag::Quaternion(0.72143364f, 0.62782055f, -0.05811472f, -0.28635225f), // index
-  gag::Quaternion(0.75385189f, -0.56104791f, -0.24378021f, -0.23979971f), // middle
-  gag::Quaternion(), // ring unavailable
-  gag::Quaternion(), // little unavailable
-  gag::Quaternion(0.13078532f, -0.28337017f, 0.94948405f, 0.03281225f), // wrist aux (accel-only used in this sketch)
-  gag::Quaternion(0.39162835f, 0.60506660f, -0.51878023f, 0.45977041f), // wrist MPU9250
+  gag::Quaternion(0.96504295f, 0.02422791f, -0.23485672f, 0.11378706f), // thumb
+  gag::Quaternion(0.46711361f, -0.04733761f, 0.87993670f, 0.07263310f), // index
+  gag::Quaternion(0.87555826f, -0.05684654f, -0.47437924f, 0.07162798f), // middle
+  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f), // ring
+  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f), // little
+  gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f), // wrist aux (accel-only used in this sketch)
+  gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f), // wrist MPU9250
 };
 
 // =====================
