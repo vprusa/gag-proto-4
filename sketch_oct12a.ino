@@ -79,7 +79,7 @@
 #endif
 
 #ifndef GAG_APPLY_MINOR_ROTATION_OFFSET
-#define GAG_APPLY_MINOR_ROTATION_OFFSET 0
+#define GAG_APPLY_MINOR_ROTATION_OFFSET 1
 #endif
 
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
@@ -307,10 +307,7 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),
   gag::Quaternion(),
   gag::Quaternion(),
-  gag::Quaternion::mul(
-    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
-    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, 90.0f)
-  ),
+  gag::Quaternion(),
 };
 
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
@@ -531,15 +528,9 @@ static gag::Quaternion fingerEulerToQuat(uint8_t sensorIdx, float rollDeg, float
   return eulerSensorToQuat(rollDeg, gloveYawDeg, pitchDeg);
 }
 
-static gag::Quaternion wristGy511EulerToQuat(float rollDeg, float pitchDeg, float yawDeg) {
-  // Keep wrist X on roll, but remap wrist-local Y/Z so the GY-511 path lines up
-  // with the visualization frame before mounting compensation is applied.
-  return eulerSensorToQuat(rollDeg, yawDeg, pitchDeg);
-}
-
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
-    return wristGy511EulerToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
+    return eulerSensorToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
   }
   if (sensorIdx == SENSOR_WRIST) {
     const float yawDeg = wristMagOk ? yawMagWristDeg : yaw_[SENSOR_WRIST];
@@ -652,11 +643,29 @@ static bool readGY511Mag(Vec3 &magRaw){
   return true;
 }
 
+static void remapGy511VectorToGloveFrame(Vec3& v) {
+  const float xIn = v.x;
+  const float yIn = v.y;
+  const float zIn = v.z;
+
+  // GY-511 is mounted with +180 deg around Z and then +90 deg around X.
+  // Apply the inverse mounting rotation to raw vectors before deriving
+  // roll, pitch, and tilt-compensated yaw.
+  // v.x = -zIn;
+  // v.y = -xIn;
+  // v.z = -yIn;
+  v.x = zIn;
+  v.y = xIn;
+  v.z = yIn;
+}
+
 static void updateGY511(){
   if (!gy511Ok) return;
   Vec3 a, m;
   if (!readGY511Accel(a)) return;
   if (!readGY511Mag(m)) return;
+  remapGy511VectorToGloveFrame(a);
+  remapGy511VectorToGloveFrame(m);
   gy511Accel_g = a;
   gy511MagRaw = m;
   gy511RollDeg  = rad2deg(atan2f(a.y, a.z));
