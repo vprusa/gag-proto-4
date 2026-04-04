@@ -78,6 +78,10 @@
 #define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 1
 #endif
 
+#ifndef GAG_APPLY_MINOR_ROTATION_OFFSET
+#define GAG_APPLY_MINOR_ROTATION_OFFSET 0
+#endif
+
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
 #define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
 #endif
@@ -292,18 +296,17 @@ static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
 };
 
 // Default per-sensor mounting compensation applied in the sensor's local/body
-// frame before neutral offsets. For local-frame corrections this means the
-// compensation is post-multiplied onto the raw orientation.
-// Fingers: sensor frame is rotated +90 deg around Z relative to the intended
-// glove frame, so use the glove->sensor mounting rotation here.
-// Wrist GY-511: mounted with +180 deg around Z and then +90 deg around X.
+// frame before neutral offsets. Finger IMUs are corrected earlier at the raw
+// accel/gyro level so their roll/pitch semantics match the glove frame before
+// quaternion creation. The wrist GY-511 still needs quaternion-frame mounting
+// compensation because it is built from its own accel/mag solution.
 static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion(),
+  gag::Quaternion(),
+  gag::Quaternion(),
+  gag::Quaternion(),
+  gag::Quaternion(),
   gag::Quaternion::mul(
     gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
     gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, 90.0f)
@@ -498,21 +501,51 @@ static gag::Quaternion eulerSensorToQuat(float rollDeg, float pitchDeg, float ya
   return gag::Quaternion::fromEulerZyxDeg(yawDeg, pitchDeg, rollDeg);
 }
 
-static gag::Quaternion fingerEulerToQuat(float rollDeg, float pitchDeg, float yawDeg) {
-  // The finger MPU path reports glove-local X/Y swapped relative to the
-  // visualization and gesture frame, so swap them before quaternion creation.
-  return eulerSensorToQuat(pitchDeg, rollDeg, yawDeg);
+static inline bool isFingerSensor(uint8_t sensorIdx) {
+  return sensorIdx >= SENSOR_THUMB && sensorIdx <= SENSOR_LITTLE;
+}
+
+static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az,
+                                           int16_t& gx, int16_t& gy, int16_t& gz) {
+  const int16_t axIn = ax;
+  const int16_t ayIn = ay;
+  const int16_t gxIn = gx;
+  const int16_t gyIn = gy;
+
+  // Sensor frame is rotated +90 deg around Z relative to the glove frame.
+  // Convert raw samples into glove-frame axes before the complementary filter.
+  ax = ayIn;
+  ay = (int16_t)-axIn;
+  gx = gyIn;
+  gy = (int16_t)-gxIn;
+  (void)az;
+  (void)gz;
+}
+
+static gag::Quaternion fingerEulerToQuat(uint8_t sensorIdx, float rollDeg, float pitchDeg, float yawDeg) {
+  // After raw-axis remapping, finger X is aligned, but the finger IMU path
+  // still reports glove-local Y/Z swapped relative to the visualization frame.
+  // The index finger has the opposite local Z direction relative to the other
+  // finger modules, so flip its yaw sign only.
+  const float gloveYawDeg = (sensorIdx == SENSOR_INDEX) ? -yawDeg : yawDeg;
+  return eulerSensorToQuat(rollDeg, gloveYawDeg, pitchDeg);
+}
+
+static gag::Quaternion wristGy511EulerToQuat(float rollDeg, float pitchDeg, float yawDeg) {
+  // GY-511 reports the glove-local wrist frame with X/Y swapped and Z inverted
+  // relative to the visualization/recognition frame.
+  return eulerSensorToQuat(pitchDeg, rollDeg, -yawDeg);
 }
 
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
-    return eulerSensorToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
+    return wristGy511EulerToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
   }
   if (sensorIdx == SENSOR_WRIST) {
     const float yawDeg = wristMagOk ? yawMagWristDeg : yaw_[SENSOR_WRIST];
     return eulerSensorToQuat(roll_[SENSOR_WRIST], pitch_[SENSOR_WRIST], yawDeg);
   }
-  return fingerEulerToQuat(roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
+  return fingerEulerToQuat(sensorIdx, roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
 }
 
 static gag::Quaternion applyDefaultSensorRotation(uint8_t sensorIdx, const gag::Quaternion& rawIn) {
@@ -528,9 +561,13 @@ static gag::Quaternion applyMinorRotationOffset(uint8_t sensorIdx, const gag::Qu
   gag::Quaternion q = physicalFixedIn;
   q.normalizeInPlace();
   if (sensorIdx >= SENSOR_COUNT_ALL) return q;
+#if GAG_APPLY_MINOR_ROTATION_OFFSET
   gag::Quaternion out = gag::Quaternion::mul(q, g_minorRotationOffset[sensorIdx]);
   out.normalizeInPlace();
   return out;
+#else
+  return q;
+#endif
 }
 
 static bool isSensorEnabled(uint8_t sensorIdx) {
@@ -720,6 +757,9 @@ static void updateOneIMU(uint8_t idx){
     gx -= hw.gx; gy -= hw.gy; gz -= hw.gz;
   } else {
     mpu[idx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    if (isFingerSensor(idx)) {
+      remapFingerRawAxesToGloveFrame(ax, ay, az, gx, gy, gz);
+    }
   }
 
   unsigned long now = millis();
