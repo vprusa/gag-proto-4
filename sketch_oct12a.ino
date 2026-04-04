@@ -74,8 +74,20 @@
 #define GAG_AUTO_CAPTURE_SW_NEUTRAL 1
 #endif
 
+#ifndef GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX
+#define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 1
+#endif
+
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
 #define GAG_MEASURE_HW_OFFSETS_AT_BOOT 1
+#endif
+
+#ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
+#define GAG_HW_CALIBRATION_REQUIRED_SAMPLES 200
+#endif
+
+#ifndef GAG_HW_CALIBRATION_SAMPLE_DELAY_MS
+#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 5
 #endif
 
 #ifndef GAG_TFT_ROTATION
@@ -223,6 +235,16 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
 };
 
+static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
+  "wrist MPU9250",
+  "thumb",
+  "index",
+  "middle",
+  "ring",
+  "little",
+  "wrist aux (accel-only used in this sketch)",
+};
+
 // Default per-sensor mounting compensation applied before neutral offsets.
 // Fingers use a 90 deg clockwise compensation around Z because the GY25 boards
 // are mounted 90 deg counterclockwise. The wrist GY-511 uses the inverse of
@@ -239,6 +261,11 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
     gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
     gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)
   ),
+};
+
+static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+  gag::Quaternion(), gag::Quaternion(), gag::Quaternion(), gag::Quaternion(),
+  gag::Quaternion(), gag::Quaternion(), gag::Quaternion()
 };
 
 // =====================
@@ -444,6 +471,15 @@ static gag::Quaternion applyDefaultSensorRotation(uint8_t sensorIdx, const gag::
   return out;
 }
 
+static gag::Quaternion applyMinorRotationOffset(uint8_t sensorIdx, const gag::Quaternion& physicalFixedIn) {
+  gag::Quaternion q = physicalFixedIn;
+  q.normalizeInPlace();
+  if (sensorIdx >= SENSOR_COUNT_ALL) return q;
+  gag::Quaternion out = gag::Quaternion::mul(g_minorRotationOffset[sensorIdx], q);
+  out.normalizeInPlace();
+  return out;
+}
+
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
     return gy511Ok;
@@ -452,7 +488,9 @@ static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
 }
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
-  return g_offsets.applySoftwareOffset(sensorIdx, applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx)));
+  const gag::Quaternion physicalFixed = applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx));
+  const gag::Quaternion minorFixed = applyMinorRotationOffset(sensorIdx, physicalFixed);
+  return g_offsets.applySoftwareOffset(sensorIdx, minorFixed);
 }
 
 static uint8_t selectedWristQuaternionPhysicalSensor() {
@@ -679,31 +717,109 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
   return true;
 }
 
+static bool hasConfiguredImuChannel(uint8_t sensorIdx) {
+  return sensorIdx < NUM_ACTIVE_IMUS;
+}
+
+static bool isSensorAvailableForOffsetMeasurement(uint8_t sensorIdx) {
+  if (sensorIdx == SENSOR_WRIST_AUX) return gy511Ok;
+  return hasConfiguredImuChannel(sensorIdx);
+}
+
+static void printHardwareOffsetsArray() {
+  Serial.println("static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    const gag::offsets::HwOffset6 hw = g_offsets.hardware(s);
+    Serial.printf("  { %d, %d, %d, %d, %d, %d }, // %s\n",
+                  (int)hw.ax, (int)hw.ay, (int)hw.az,
+                  (int)hw.gx, (int)hw.gy, (int)hw.gz,
+                  SENSOR_OFFSET_LABELS[s]);
+  }
+  Serial.println("};");
+}
+
+static void printHardwareCalibrationStats(uint8_t sensorIdx,
+                                          const gag::offsets::SampleStats& stats,
+                                          bool stable,
+                                          const gag::offsets::HwOffset6& hw) {
+  Serial.printf("HW calib sensor=%u label=%s stable=%u samples=%u\n",
+                (unsigned)sensorIdx,
+                SENSOR_OFFSET_LABELS[sensorIdx],
+                stable ? 1u : 0u,
+                (unsigned)stats.count);
+  if (!stats.valid) {
+    Serial.println("  no samples captured");
+    return;
+  }
+  Serial.printf("  mean={ %d, %d, %d, %d, %d, %d }\n",
+                (int)stats.mean.ax, (int)stats.mean.ay, (int)stats.mean.az,
+                (int)stats.mean.gx, (int)stats.mean.gy, (int)stats.mean.gz);
+  Serial.printf("  min ={ %d, %d, %d, %d, %d, %d }\n",
+                (int)stats.min.ax, (int)stats.min.ay, (int)stats.min.az,
+                (int)stats.min.gx, (int)stats.min.gy, (int)stats.min.gz);
+  Serial.printf("  max ={ %d, %d, %d, %d, %d, %d }\n",
+                (int)stats.max.ax, (int)stats.max.ay, (int)stats.max.az,
+                (int)stats.max.gx, (int)stats.max.gy, (int)stats.max.gz);
+  Serial.printf("  hw  ={ %d, %d, %d, %d, %d, %d }\n",
+                (int)hw.ax, (int)hw.ay, (int)hw.az,
+                (int)hw.gx, (int)hw.gy, (int)hw.gz);
+}
+
+static void applyCurrentHardwareOffsetsToInitializedSensors() {
+  for (uint8_t idx = 1; idx < NUM_ACTIVE_IMUS; ++idx) {
+    const gag::offsets::HwOffset6 hw = g_offsets.hardware(idx);
+    mpu[idx].setXAccelOffset(hw.ax);
+    mpu[idx].setYAccelOffset(hw.ay);
+    mpu[idx].setZAccelOffset(hw.az);
+    mpu[idx].setXGyroOffset(hw.gx);
+    mpu[idx].setYGyroOffset(hw.gy);
+    mpu[idx].setZGyroOffset(hw.gz);
+  }
+}
+
 static void measureHardwareOffsetsAtBoot() {
 #if GAG_MEASURE_HW_OFFSETS_AT_BOOT
-  const gag::offsets::StableWindowConfig cfg;
+  gag::offsets::StableWindowConfig cfg;
+  cfg.required_samples = GAG_HW_CALIBRATION_REQUIRED_SAMPLES;
+  Serial.printf("HW calib start samples=%u delay_ms=%u\n",
+                (unsigned)cfg.required_samples,
+                (unsigned)GAG_HW_CALIBRATION_SAMPLE_DELAY_MS);
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!isSensorAvailableForOffsetMeasurement(s)) {
+      Serial.printf("HW calib sensor=%u label=%s skipped unavailable\n",
+                    (unsigned)s,
+                    SENSOR_OFFSET_LABELS[s]);
+      continue;
+    }
+
     gag::offsets::StablePoseAccumulator acc;
-    uint32_t deadline = millis() + 4000;
-    while ((int32_t)(millis() - deadline) < 0 && !acc.isStable(cfg)) {
+    for (uint16_t i = 0; i < cfg.required_samples; ++i) {
       gag::offsets::RawImuSample sample;
       if (readRawSampleForOffset(s, sample)) {
         acc.push(sample);
       }
-      delay(5);
+      delay(GAG_HW_CALIBRATION_SAMPLE_DELAY_MS);
     }
-    gag::offsets::SampleStats stats = acc.stats();
-    if (stats.valid && acc.isStable(cfg)) {
-      g_offsets.setHardware(s, gag::offsets::computeHardwareOffsetsFromStablePose(stats));
+
+    const gag::offsets::SampleStats stats = acc.stats();
+    const bool stable = acc.isStable(cfg);
+    const gag::offsets::HwOffset6 hw = stable
+      ? gag::offsets::computeHardwareOffsetsFromStablePose(stats)
+      : g_offsets.hardware(s);
+    if (stable) {
+      g_offsets.setHardware(s, hw);
     }
+    printHardwareCalibrationStats(s, stats, stable, hw);
   }
+  applyCurrentHardwareOffsetsToInitializedSensors();
+  printHardwareOffsetsArray();
 #endif
 }
 
 // =====================
 // Boot-time software offset neutral capture
 // =====================
-static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, uint8_t samples = 16) {
+static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, bool includeMinorRotationOffset, uint8_t samples = 16) {
   gag::Quaternion ref(1,0,0,0);
   gag::Quaternion sum(0,0,0,0);
   bool haveRef = false;
@@ -717,6 +833,9 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, uint8_t sampl
     }
 
     gag::Quaternion q = applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx));
+    if (includeMinorRotationOffset) {
+      q = applyMinorRotationOffset(sensorIdx, q);
+    }
     q.normalizeInPlace();
 
     if (!haveRef) { ref = q; haveRef = true; }
@@ -731,10 +850,30 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, uint8_t sampl
   return sum;
 }
 
+static gag::Quaternion computeMinorRotationCompensation(const gag::Quaternion& currentPhysicalFixed,
+                                                      const gag::Quaternion& desiredOrientation = gag::Quaternion()) {
+  gag::Quaternion current = currentPhysicalFixed;
+  current.normalizeInPlace();
+  gag::Quaternion desired = desiredOrientation;
+  desired.normalizeInPlace();
+  gag::Quaternion out = gag::Quaternion::mul(desired, current.inverseUnit());
+  out.normalizeInPlace();
+  return out;
+}
+
+static void captureMinorRotationOffsetsAtBoot() {
+#if GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, false, 16);
+    g_minorRotationOffset[s] = computeMinorRotationCompensation(qAvg, gag::Quaternion());
+  }
+#endif
+}
+
 static void autoCaptureSoftwareNeutralOffsets() {
 #if GAG_AUTO_CAPTURE_SW_NEUTRAL
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, 16);
+    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, true, 16);
     const gag::Quaternion off = gag::offsets::OffsetStore::computeNeutralizingSoftwareOffset(qAvg, gag::Quaternion());
     g_offsets.setSoftwareQuaternion(s, off);
   }
@@ -947,10 +1086,8 @@ void setup() {
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     g_offsets.setHardware(i, DEFAULT_HW_OFFSETS[i]);
     g_offsets.setSoftwareQuaternion(i, gag::Quaternion());
+    g_minorRotationOffset[i] = gag::Quaternion();
   }
-
-  // Optional hardware offset measurement before IMU init.
-  measureHardwareOffsetsAtBoot();
 
   for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) {
     bool ok = initOneIMU(i);
@@ -972,6 +1109,17 @@ void setup() {
     delay(10);
   }
 
+  measureHardwareOffsetsAtBoot();
+
+  // Let the sensor fusion settle again after applying the calibrated offsets.
+  for (uint8_t warm = 0; warm < 20; ++warm) {
+    for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) updateOneIMU(i);
+    updateWristMagYaw();
+    updateGY511();
+    delay(10);
+  }
+
+  captureMinorRotationOffsetsAtBoot();
   autoCaptureSoftwareNeutralOffsets();
 
 #if GAG_ENABLE_BLE_MOUSE
