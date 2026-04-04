@@ -282,7 +282,8 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 }, // ring
   { 0, 0, 0, 0, 0, 0 }, // little
   { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
-  { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+  // { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+  { -2215, -141, 2588, -145, 35, -21 }, // wrist MPU9250
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -560,6 +561,8 @@ static float yawFromMagTiltComp(const Vec3& m, float rollDeg, float pitchDeg){
 // Optional vibration
 // =====================
 #if GAG_ENABLE_VIBRATION
+static const uint8_t STARTUP_VIBRATION_TEST_SENSORS[] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE};
+
 static void setMotorOutput(uint8_t sensorIdx, bool on) {
   if (sensorIdx >= SENSOR_COUNT_ALL) return;
   const int8_t pin = MOTOR_PINS[sensorIdx];
@@ -597,10 +600,45 @@ static void updateVibrations() {
     }
   }
 }
+
+static void runStartupVibrationTest() {
+  for (uint8_t i = 0; i < sizeof(STARTUP_VIBRATION_TEST_SENSORS); ++i) {
+    const uint8_t sensorIdx = STARTUP_VIBRATION_TEST_SENSORS[i];
+    if (!isSensorEnabled(sensorIdx)) continue;
+    scheduleVibration((uint8_t)(1u << sensorIdx), 500);
+    while (g_motorState[sensorIdx].active) {
+      updateVibrations();
+      delay(10);
+    }
+    delay(80);
+  }
+
+  uint8_t allMask = 0;
+  for (uint8_t i = 0; i < sizeof(STARTUP_VIBRATION_TEST_SENSORS); ++i) {
+    const uint8_t sensorIdx = STARTUP_VIBRATION_TEST_SENSORS[i];
+    if (!isSensorEnabled(sensorIdx)) continue;
+    allMask |= (uint8_t)(1u << sensorIdx);
+  }
+
+  if (allMask != 0) {
+    scheduleVibration(allMask, 1000);
+    while (true) {
+      bool anyActive = false;
+      updateVibrations();
+      for (uint8_t i = 0; i < sizeof(STARTUP_VIBRATION_TEST_SENSORS); ++i) {
+        const uint8_t sensorIdx = STARTUP_VIBRATION_TEST_SENSORS[i];
+        if (g_motorState[sensorIdx].active) { anyActive = true; break; }
+      }
+      if (!anyActive) break;
+      delay(10);
+    }
+  }
+}
 #else
 static void initMotors() {}
 static void scheduleVibration(uint8_t, uint16_t) {}
 static void updateVibrations() {}
+static void runStartupVibrationTest() {}
 #endif
 
 // =====================
@@ -1486,6 +1524,7 @@ void setup() {
   g_bleMouse.begin();
 #endif
   initMotors();
+  runStartupVibrationTest();
 
   g_recognizer.begin(Serial);
   g_recognizer.setOnRecognized(onGestureRecognized);
