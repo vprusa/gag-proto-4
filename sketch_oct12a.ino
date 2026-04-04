@@ -83,7 +83,7 @@
 #endif
 
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
-#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
+#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 1
 #endif
 
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
@@ -158,8 +158,8 @@ static const uint8_t CH_GY511 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
 // thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250.
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511, CH_MPU9250};
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511, CH_MPU9250};
+// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
 
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
@@ -169,8 +169,8 @@ static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   false, // ring
   false, // little
   true,  // wrist aux GY-511
-  // true,  // wrist MPU9250
-  false,  // wrist MPU9250
+  true,  // wrist MPU9250
+  // false,  // wrist MPU9250
 };
 
 static const uint8_t FINGER_MAP[5] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE};
@@ -408,6 +408,57 @@ static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t*buf, uint8_t len){
   Wire.endTransmission(false);
   Wire.requestFrom((int)addr, (int)len);
   for (uint8_t i = 0; i < len && Wire.available(); ++i) buf[i] = Wire.read();
+}
+
+static bool i2cAddressResponds(uint8_t addr){
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+static void printWristMpuDiagnostic() {
+  const uint8_t ch = ACTIVE_CHANNELS[SENSOR_WRIST];
+  pcaSelect(ch);
+
+  const bool ack68 = i2cAddressResponds(MPU9250_ADDR_DEFAULT);
+  const bool ack69 = i2cAddressResponds(MPU9250_ADDR_ALT);
+  const uint8_t who68 = i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I);
+  const uint8_t who69 = i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I);
+
+  Serial.printf("Wrist MPU diagnostic: ch=%u ack68=%u who68=0x%02X ack69=%u who69=0x%02X\n",
+                (unsigned)ch,
+                ack68 ? 1u : 0u,
+                (unsigned)who68,
+                ack69 ? 1u : 0u,
+                (unsigned)who69);
+
+  uint8_t diagAddr = 0;
+  if (who68 == 0x71 || who68 == 0x73 || ack68) diagAddr = MPU9250_ADDR_DEFAULT;
+  else if (who69 == 0x71 || who69 == 0x73 || ack69) diagAddr = MPU9250_ADDR_ALT;
+
+  if (diagAddr == 0) {
+    Serial.println("  no response on 0x68 or 0x69");
+    return;
+  }
+
+  i2cWriteByte(diagAddr, REG_PWR_MGMT_1, 0x00);
+  delay(10);
+  const uint8_t pwr = i2cReadByte(diagAddr, REG_PWR_MGMT_1);
+  const uint8_t who = i2cReadByte(diagAddr, REG_WHO_AM_I);
+  uint8_t buf[14] = {0};
+  i2cReadBytes(diagAddr, REG_ACCEL_XOUT_H, buf, 14);
+  const int16_t ax = (int16_t)((buf[0]<<8)  | buf[1]);
+  const int16_t ay = (int16_t)((buf[2]<<8)  | buf[3]);
+  const int16_t az = (int16_t)((buf[4]<<8)  | buf[5]);
+  const int16_t gx = (int16_t)((buf[8]<<8)  | buf[9]);
+  const int16_t gy = (int16_t)((buf[10]<<8) | buf[11]);
+  const int16_t gz = (int16_t)((buf[12]<<8) | buf[13]);
+
+  Serial.printf("  selected=0x%02X who=0x%02X pwr_mgmt_1=0x%02X\n",
+                (unsigned)diagAddr,
+                (unsigned)who,
+                (unsigned)pwr);
+  Serial.printf("  raw accel={%d,%d,%d} gyro={%d,%d,%d}\n",
+                (int)ax, (int)ay, (int)az, (int)gx, (int)gy, (int)gz);
 }
 
 static uint8_t detectWristMpuAddress() {
@@ -1396,6 +1447,9 @@ void setup() {
     lastT[i] = millis();
     if (!ok) {
       Serial.printf("IMU init failed idx=%u ch=%u wrist_addr=0x%02X\n", i, ACTIVE_CHANNELS[i], (unsigned)wristMpuAddress());
+      if (i == SENSOR_WRIST) {
+        printWristMpuDiagnostic();
+      }
     }
     delay(10);
   }
