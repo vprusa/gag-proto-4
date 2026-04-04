@@ -130,9 +130,15 @@ struct Vec3;
 #endif
 
 #ifndef GAG_FIFO_RESET_INTERVAL_MS
-// #define GAG_FIFO_RESET_INTERVAL_MS 10
-// #define GAG_FIFO_RESET_INTERVAL_MS 1000
-#define GAG_FIFO_RESET_INTERVAL_MS 100
+#define GAG_FIFO_RESET_INTERVAL_MS 500
+#endif
+
+#ifndef GAG_MPU_FIFO_DLPF_CFG
+#define GAG_MPU_FIFO_DLPF_CFG 0x04u  // 20 Hz gyro bandwidth for lower noise.
+#endif
+
+#ifndef GAG_MPU_FIFO_SMPLRT_DIV
+#define GAG_MPU_FIFO_SMPLRT_DIV 9u   // 1 kHz / (1 + 9) = 100 Hz FIFO sample rate.
 #endif
 
 #ifndef GAG_ENABLE_FIFO_BOOT_TEST
@@ -550,8 +556,8 @@ static const uint8_t MPU_FIFO_ACCEL_GYRO_ENABLE_MASK = 0x78u;
 static const uint8_t MPU_USER_CTRL_FIFO_EN = 0x40u;
 static const uint8_t MPU_USER_CTRL_FIFO_RESET = 0x04u;
 static const uint8_t MPU_INT_STATUS_FIFO_OVERFLOW = 0x10u;
-static const uint8_t MPU_CONFIG_DLPF_42HZ = 0x03u;
-static const uint8_t MPU_SMPLRT_DIV_200HZ = 4u;
+static const uint8_t MPU_FIFO_CONFIG_DLPF = (uint8_t)GAG_MPU_FIFO_DLPF_CFG;
+static const uint8_t MPU_FIFO_SMPLRT_DIV = (uint8_t)GAG_MPU_FIFO_SMPLRT_DIV;
 static const uint8_t MPU_PWR_CLKSEL_ZGYRO = 0x03u;
 
 static uint16_t fifoMaxBytesForSensor(uint8_t sensorIdx) {
@@ -596,8 +602,8 @@ static void configureMpuFifo(uint8_t sensorIdx) {
   i2cWriteByte(addr, REG_USER_CTRL, 0x00);
   i2cWriteByte(addr, REG_FIFO_EN, 0x00);
   i2cWriteByte(addr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO);
-  i2cWriteByte(addr, REG_CONFIG, MPU_CONFIG_DLPF_42HZ);
-  i2cWriteByte(addr, REG_SMPLRT_DIV, MPU_SMPLRT_DIV_200HZ);
+  i2cWriteByte(addr, REG_CONFIG, MPU_FIFO_CONFIG_DLPF);
+  i2cWriteByte(addr, REG_SMPLRT_DIV, MPU_FIFO_SMPLRT_DIV);
   i2cWriteByte(addr, REG_USER_CTRL, MPU_USER_CTRL_FIFO_RESET);
   delay(2);
   (void)i2cReadByte(addr, REG_INT_STATUS);
@@ -651,7 +657,11 @@ static void maybeResetMpuFifo(uint8_t sensorIdx) {
 #if GAG_ENABLE_MPU_FIFO
   if (!sensorCanUseRotationFifo(sensorIdx)) return;
   const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
-  if (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx)) {
+  const uint32_t now = millis();
+  const bool fifoNearOverflow = (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx));
+  const bool fifoStalled = (fifoCount >= (uint16_t)(MPU_FIFO_PACKET_SIZE_BYTES * 8u)) &&
+                           ((uint32_t)(now - g_lastFifoResetMs[sensorIdx]) >= (uint32_t)GAG_FIFO_RESET_INTERVAL_MS);
+  if (fifoNearOverflow || fifoStalled) {
     resetMpuFifo(sensorIdx);
   }
 #else
