@@ -79,7 +79,7 @@
 #endif
 
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
-#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 1
+#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
 #endif
 
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
@@ -87,7 +87,12 @@
 #endif
 
 #ifndef GAG_HW_CALIBRATION_SAMPLE_DELAY_MS
-#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 5
+// #define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 5
+#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 25
+#endif
+
+#ifndef GAG_HW_CALIBRATION_APPLY_UNSTABLE
+#define GAG_HW_CALIBRATION_APPLY_UNSTABLE 1
 #endif
 
 #ifndef GAG_TFT_ROTATION
@@ -141,6 +146,17 @@ const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4, 7, 1, 5};
 // const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4};
 const uint8_t NUM_ACTIVE_IMUS = sizeof(ACTIVE_CHANNELS) / sizeof(ACTIVE_CHANNELS[0]);
 static const uint8_t CH_GY511 = 2;
+
+// Enable only the sensors that are physically connected in the current glove.
+static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
+  false, // wrist MPU9250
+  true,  // thumb
+  true,  // index
+  true,  // middle
+  false, // ring
+  false, // little
+  true,  // wrist aux GY-511
+};
 
 // Indexes into ACTIVE_CHANNELS / roll_ / pitch_ / yaw_ arrays.
 static const uint8_t FINGER_MAP[5] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE};
@@ -225,15 +241,45 @@ unsigned long gy511LastT = 0;
 // =====================
 // Old 6-component layout: ax, ay, az, gx, gy, gz.
 // Edit these after calibration. Left at 0 by default in the merged TTGO build.
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+//   { 0, 0, 0, 0, 0, 0 }, // thumb
+//   { 0, 0, 0, 0, 0, 0 }, // index
+//   { 0, 0, 0, 0, 0, 0 }, // middle
+//   { 0, 0, 0, 0, 0, 0 }, // ring
+//   { 0, 0, 0, 0, 0, 0 }, // little
+//   { 0, 0, 0, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+// };
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+//   { -1583, -787, 1897, 49, -27, 22 }, // thumb
+//   { 1645, -1569, 1669, 146, 16, 21 }, // index
+//   { -1119, -613, 1101, 244, 92, 53 }, // middle
+//   { 0, 0, 0, 0, 0, 0 }, // ring
+//   { 0, 0, 0, 0, 0, 0 }, // little
+//   { 270, 2051, 1915, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+// };
+
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
-  { 0, 0, 0, 0, 0, 0 }, // thumb
-  { 0, 0, 0, 0, 0, 0 }, // index
-  { 0, 0, 0, 0, 0, 0 }, // middle
+  { 60, 171, -184, 1, 0, 0 }, // thumb
+  { -47, 80, -204, -2, 1, 1 }, // index
+  { 110, 86, -137, 0, 4, 0 }, // middle
   { 0, 0, 0, 0, 0, 0 }, // ring
   { 0, 0, 0, 0, 0, 0 }, // little
-  { 0, 0, 0, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+  { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
 };
+
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
+//   { -1628, -840, 2091, 48, -27, 22 }, // thumb
+//   { 1938, -1272, 1914, 146, 17, 20 }, // index
+//   // { -1275, -1079, 1221, 250, 92, 53 }, // middle
+//   { 110, 86, -137, 0, 4, 0 }, // middle
+//   { 0, 0, 0, 0, 0, 0 }, // ring
+//   { 0, 0, 0, 0, 0, 0 }, // little
+//   { 493, 2309, 2129, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+// };
 
 static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
   "wrist MPU9250",
@@ -245,21 +291,22 @@ static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
   "wrist aux (accel-only used in this sketch)",
 };
 
-// Default per-sensor mounting compensation applied before neutral offsets.
-// Fingers use a 90 deg clockwise compensation around Z because the GY25 boards
-// are mounted 90 deg counterclockwise. The wrist GY-511 uses the inverse of
-// its physical mounting: undo the 90 deg X rotation, then undo the 180 deg Z
-// rotation.
+// Default per-sensor mounting compensation applied in the sensor's local/body
+// frame before neutral offsets. For local-frame corrections this means the
+// compensation is post-multiplied onto the raw orientation.
+// Fingers: sensor frame is rotated +90 deg around Z relative to the intended
+// glove frame, so use the glove->sensor mounting rotation here.
+// Wrist GY-511: mounted with +180 deg around Z and then +90 deg around X.
 static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::mul(
     gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
-    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, 90.0f)
   ),
 };
 
@@ -451,6 +498,12 @@ static gag::Quaternion eulerSensorToQuat(float rollDeg, float pitchDeg, float ya
   return gag::Quaternion::fromEulerZyxDeg(yawDeg, pitchDeg, rollDeg);
 }
 
+static gag::Quaternion fingerEulerToQuat(float rollDeg, float pitchDeg, float yawDeg) {
+  // The finger MPU path reports glove-local X/Y swapped relative to the
+  // visualization and gesture frame, so swap them before quaternion creation.
+  return eulerSensorToQuat(pitchDeg, rollDeg, yawDeg);
+}
+
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
     return eulerSensorToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
@@ -459,14 +512,14 @@ static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
     const float yawDeg = wristMagOk ? yawMagWristDeg : yaw_[SENSOR_WRIST];
     return eulerSensorToQuat(roll_[SENSOR_WRIST], pitch_[SENSOR_WRIST], yawDeg);
   }
-  return eulerSensorToQuat(roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
+  return fingerEulerToQuat(roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
 }
 
 static gag::Quaternion applyDefaultSensorRotation(uint8_t sensorIdx, const gag::Quaternion& rawIn) {
   gag::Quaternion raw = rawIn;
   raw.normalizeInPlace();
   if (sensorIdx >= SENSOR_COUNT_ALL) return raw;
-  gag::Quaternion out = gag::Quaternion::mul(DEFAULT_SENSOR_ROTATION[sensorIdx], raw);
+  gag::Quaternion out = gag::Quaternion::mul(raw, DEFAULT_SENSOR_ROTATION[sensorIdx]);
   out.normalizeInPlace();
   return out;
 }
@@ -475,16 +528,21 @@ static gag::Quaternion applyMinorRotationOffset(uint8_t sensorIdx, const gag::Qu
   gag::Quaternion q = physicalFixedIn;
   q.normalizeInPlace();
   if (sensorIdx >= SENSOR_COUNT_ALL) return q;
-  gag::Quaternion out = gag::Quaternion::mul(g_minorRotationOffset[sensorIdx], q);
+  gag::Quaternion out = gag::Quaternion::mul(q, g_minorRotationOffset[sensorIdx]);
   out.normalizeInPlace();
   return out;
 }
 
+static bool isSensorEnabled(uint8_t sensorIdx) {
+  return sensorIdx < SENSOR_COUNT_ALL && SENSOR_ENABLED[sensorIdx];
+}
+
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
+  if (!isSensorEnabled(sensorIdx)) return false;
   if (sensorIdx == SENSOR_WRIST_AUX) {
     return gy511Ok;
   }
-  return true;
+  return sensorIdx < NUM_ACTIVE_IMUS;
 }
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
@@ -574,6 +632,7 @@ static void updateGY511(){
 // Wrist AK8963
 // =====================
 static bool initWristMagAK8963(){
+  if (!isSensorEnabled(SENSOR_WRIST)) return false;
   pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
   i2cWriteByte(MPU9250_ADDR, REG_INT_PIN_CFG, 0x02); // bypass enable
   delay(10);
@@ -585,6 +644,7 @@ static bool initWristMagAK8963(){
 }
 
 static bool readWristMag(Vec3 &magOut){
+  if (!isSensorEnabled(SENSOR_WRIST)) return false;
   pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
   uint8_t st1 = i2cReadByte(AK8963_ADDR, AK8963_ST1);
   if (!(st1 & 0x01)) return false;
@@ -612,6 +672,7 @@ static void updateWristMagYaw(){
 // IMU init/update
 // =====================
 static bool initOneIMU(uint8_t idx){
+  if (!isSensorEnabled(idx)) return true;
   const uint8_t ch = ACTIVE_CHANNELS[idx];
   pcaSelect(ch);
 
@@ -639,6 +700,7 @@ static bool initOneIMU(uint8_t idx){
 }
 
 static void updateOneIMU(uint8_t idx){
+  if (!isSensorEnabled(idx)) return;
   int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
   pcaSelect(ACTIVE_CHANNELS[idx]);
 
@@ -718,10 +780,11 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
 }
 
 static bool hasConfiguredImuChannel(uint8_t sensorIdx) {
-  return sensorIdx < NUM_ACTIVE_IMUS;
+  return sensorIdx < NUM_ACTIVE_IMUS && isSensorEnabled(sensorIdx);
 }
 
 static bool isSensorAvailableForOffsetMeasurement(uint8_t sensorIdx) {
+  if (!isSensorEnabled(sensorIdx)) return false;
   if (sensorIdx == SENSOR_WRIST_AUX) return gy511Ok;
   return hasConfiguredImuChannel(sensorIdx);
 }
@@ -741,11 +804,13 @@ static void printHardwareOffsetsArray() {
 static void printHardwareCalibrationStats(uint8_t sensorIdx,
                                           const gag::offsets::SampleStats& stats,
                                           bool stable,
+                                          bool applied,
                                           const gag::offsets::HwOffset6& hw) {
-  Serial.printf("HW calib sensor=%u label=%s stable=%u samples=%u\n",
+  Serial.printf("HW calib sensor=%u label=%s stable=%u applied=%u samples=%u\n",
                 (unsigned)sensorIdx,
                 SENSOR_OFFSET_LABELS[sensorIdx],
                 stable ? 1u : 0u,
+                applied ? 1u : 0u,
                 (unsigned)stats.count);
   if (!stats.valid) {
     Serial.println("  no samples captured");
@@ -767,6 +832,7 @@ static void printHardwareCalibrationStats(uint8_t sensorIdx,
 
 static void applyCurrentHardwareOffsetsToInitializedSensors() {
   for (uint8_t idx = 1; idx < NUM_ACTIVE_IMUS; ++idx) {
+    if (!isSensorEnabled(idx)) continue;
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(idx);
     mpu[idx].setXAccelOffset(hw.ax);
     mpu[idx].setYAccelOffset(hw.ay);
@@ -803,13 +869,21 @@ static void measureHardwareOffsetsAtBoot() {
 
     const gag::offsets::SampleStats stats = acc.stats();
     const bool stable = acc.isStable(cfg);
-    const gag::offsets::HwOffset6 hw = stable
-      ? gag::offsets::computeHardwareOffsetsFromStablePose(stats)
-      : g_offsets.hardware(s);
-    if (stable) {
+    const gag::offsets::HwOffset6 previousHw = g_offsets.hardware(s);
+    const gag::offsets::HwOffset6 proposedHw = gag::offsets::computeHardwareOffsetsFromStablePose(stats);
+    bool applied = false;
+    gag::offsets::HwOffset6 hw = previousHw;
+    if (stats.valid && (stable || GAG_HW_CALIBRATION_APPLY_UNSTABLE)) {
+      hw = proposedHw;
       g_offsets.setHardware(s, hw);
+      applied = true;
+      if (!stable) {
+        Serial.println("  calibration window unstable, applying proposed hardware offsets anyway");
+      }
+    } else if (!stable) {
+      Serial.println("  calibration window unstable, keeping previous hardware offsets");
     }
-    printHardwareCalibrationStats(s, stats, stable, hw);
+    printHardwareCalibrationStats(s, stats, stable, applied, hw);
   }
   applyCurrentHardwareOffsetsToInitializedSensors();
   printHardwareOffsetsArray();
@@ -823,6 +897,10 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, bool includeM
   gag::Quaternion ref(1,0,0,0);
   gag::Quaternion sum(0,0,0,0);
   bool haveRef = false;
+
+  if (!physicalSensorQuaternionAvailable(sensorIdx)) {
+    return gag::Quaternion();
+  }
 
   for (uint8_t i = 0; i < samples; ++i) {
     if (sensorIdx == SENSOR_WRIST_AUX) {
@@ -856,14 +934,33 @@ static gag::Quaternion computeMinorRotationCompensation(const gag::Quaternion& c
   current.normalizeInPlace();
   gag::Quaternion desired = desiredOrientation;
   desired.normalizeInPlace();
-  gag::Quaternion out = gag::Quaternion::mul(desired, current.inverseUnit());
+  gag::Quaternion out = gag::Quaternion::mul(current.inverseUnit(), desired);
   out.normalizeInPlace();
   return out;
+}
+
+static void printQuaternionWxyz(const char* prefix, const gag::Quaternion& qIn) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  Serial.printf("%s{ w=%.5f, x=%.5f, y=%.5f, z=%.5f }\n", prefix, q.w, q.x, q.y, q.z);
+}
+
+static void printRotationOffsetsAtBoot() {
+  Serial.println("Rotation offsets:");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!isSensorEnabled(s)) continue;
+    Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
+    printQuaternionWxyz("  ideal   = ", gag::Quaternion());
+    printQuaternionWxyz("  default = ", DEFAULT_SENSOR_ROTATION[s]);
+    printQuaternionWxyz("  minor   = ", g_minorRotationOffset[s]);
+    printQuaternionWxyz("  combined= ", gag::Quaternion::mul(DEFAULT_SENSOR_ROTATION[s], g_minorRotationOffset[s]));
+  }
 }
 
 static void captureMinorRotationOffsetsAtBoot() {
 #if GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
     const gag::Quaternion qAvg = averageCurrentSensorQuat(s, false, 16);
     g_minorRotationOffset[s] = computeMinorRotationCompensation(qAvg, gag::Quaternion());
   }
@@ -873,6 +970,7 @@ static void captureMinorRotationOffsetsAtBoot() {
 static void autoCaptureSoftwareNeutralOffsets() {
 #if GAG_AUTO_CAPTURE_SW_NEUTRAL
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
     const gag::Quaternion qAvg = averageCurrentSensorQuat(s, true, 16);
     const gag::Quaternion off = gag::offsets::OffsetStore::computeNeutralizingSoftwareOffset(qAvg, gag::Quaternion());
     g_offsets.setSoftwareQuaternion(s, off);
@@ -1022,6 +1120,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 static void feedRecognizerFromCurrentPose() {
   const uint32_t now = millis();
   for (uint8_t s = 0; s < SENSOR_COUNT_HAND; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
     gag::Quaternion qCorr = (s == SENSOR_WRIST)
       ? correctedLogicalWristQuaternion()
       : correctedQuaternionForPhysicalSensor(s);
@@ -1029,17 +1128,19 @@ static void feedRecognizerFromCurrentPose() {
   }
 
   // Wrist accel can be used later for acceleration-driven gestures.
-  pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
-  uint8_t buf[6] = {0};
-  i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 6);
-  int16_t ax = (int16_t)((buf[0]<<8) | buf[1]);
-  int16_t ay = (int16_t)((buf[2]<<8) | buf[3]);
-  int16_t az = (int16_t)((buf[4]<<8) | buf[5]);
-  const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
-  gag::AccelData a((float)(ax - hw.ax) / 16384.0f,
-                   (float)(ay - hw.ay) / 16384.0f,
-                   (float)(az - hw.az) / 16384.0f);
-  g_recognizer.processSample(gag::Sensor::WRIST, gag::RecogData::fromAccel(a), now);
+  if (isSensorEnabled(SENSOR_WRIST)) {
+    pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
+    uint8_t buf[6] = {0};
+    i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 6);
+    int16_t ax = (int16_t)((buf[0]<<8) | buf[1]);
+    int16_t ay = (int16_t)((buf[2]<<8) | buf[3]);
+    int16_t az = (int16_t)((buf[4]<<8) | buf[5]);
+    const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
+    gag::AccelData a((float)(ax - hw.ax) / 16384.0f,
+                     (float)(ay - hw.ay) / 16384.0f,
+                     (float)(az - hw.az) / 16384.0f);
+    g_recognizer.processSample(gag::Sensor::WRIST, gag::RecogData::fromAccel(a), now);
+  }
 }
 
 // =====================
@@ -1050,15 +1151,18 @@ static gag::viz::FrameInput buildVizFrame() {
   frame.sensor_count = SENSOR_COUNT_ALL;
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     frame.base_color[i] = SENSOR_COLORS[i];
-    frame.present[i] = true;
+    frame.present[i] = physicalSensorQuaternionAvailable(i);
   }
 
   for (uint8_t s = 0; s < SENSOR_COUNT_HAND; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
     frame.sensor_q[s] = correctedQuaternionForPhysicalSensor(s);
   }
 
-  frame.sensor_q[SENSOR_WRIST_AUX] = correctedQuaternionForPhysicalSensor(SENSOR_WRIST_AUX);
-  frame.present[SENSOR_WRIST_AUX] = gy511Ok;
+  if (physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX)) {
+    frame.sensor_q[SENSOR_WRIST_AUX] = correctedQuaternionForPhysicalSensor(SENSOR_WRIST_AUX);
+  }
+  frame.present[SENSOR_WRIST_AUX] = physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX);
   frame.hand_wrist_q = correctedLogicalWristQuaternion();
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
@@ -1120,6 +1224,7 @@ void setup() {
   }
 
   captureMinorRotationOffsetsAtBoot();
+  printRotationOffsetsAtBoot();
   autoCaptureSoftwareNeutralOffsets();
 
 #if GAG_ENABLE_BLE_MOUSE
