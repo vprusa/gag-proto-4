@@ -77,7 +77,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX
-#define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 1
+#define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 0
 #endif
 
 #ifndef GAG_APPLY_MINOR_ROTATION_OFFSET
@@ -121,6 +121,30 @@ struct Vec3;
 #define GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS 100
 #endif
 
+#ifndef GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES
+#define GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES 1
+#endif
+
+#ifndef GAG_MINOR_ROTATION_OFFSET_PRINT_INTERVAL_MS
+#define GAG_MINOR_ROTATION_OFFSET_PRINT_INTERVAL_MS 5000UL
+#endif
+
+#ifndef GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
+#define GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE 1
+#endif
+
+#ifndef GAG_TTGO_LEFT_BUTTON_PIN
+#define GAG_TTGO_LEFT_BUTTON_PIN 35
+#endif
+
+#ifndef GAG_TTGO_BUTTON_ACTIVE_LOW
+#define GAG_TTGO_BUTTON_ACTIVE_LOW 1
+#endif
+
+#ifndef GAG_TTGO_BUTTON_DEBOUNCE_MS
+#define GAG_TTGO_BUTTON_DEBOUNCE_MS 250UL
+#endif
+
 #ifndef GAG_USE_MPU_DMP_QUAT_FIFO
 #define GAG_USE_MPU_DMP_QUAT_FIFO 0
 #endif
@@ -138,7 +162,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_FIFO_RESET_INTERVAL_MS
-#define GAG_FIFO_RESET_INTERVAL_MS 500
+#define GAG_FIFO_RESET_INTERVAL_MS 50
 #endif
 
 #ifndef GAG_MPU_FIFO_DLPF_CFG
@@ -166,8 +190,8 @@ struct Vec3;
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
 #define GAG_PRIMARY_WRIST_SENSOR_GY511   1
 #ifndef GAG_PRIMARY_WRIST_SENSOR
-// #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY511
-#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
+#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY511
+// #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
 #if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) &&     (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
@@ -189,6 +213,15 @@ struct Vec3;
 
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
 static uint8_t g_wristMpuAddr = MPU9250_ADDR_DEFAULT;
+
+static bool readTtgoLeftButtonPressed() {
+#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
+  const int raw = digitalRead(GAG_TTGO_LEFT_BUTTON_PIN);
+  return GAG_TTGO_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
+#else
+  return false;
+#endif
+}
 
 // =====================
 // Sensor topology
@@ -237,6 +270,9 @@ static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
 //   sensorBitMask(SENSOR_THUMB) | sensorBitMask(SENSOR_INDEX) | sensorBitMask(SENSOR_WRIST)
 static uint8_t g_serialQuatLogSensorMask = 0;
 static uint32_t g_lastSerialQuatLogMs = 0;
+static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
+static bool g_leftButtonPrevPressed = false;
+static uint32_t g_leftButtonLastTriggerMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -344,7 +380,8 @@ unsigned long gy511LastT = 0;
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 60, 171, -184, 1, 0, 0 }, // thumb
   { -47, 80, -204, -2, 1, 1 }, // index
-  { 110, 86, -137, 0, 4, 0 }, // middle
+  // { 110, 86, -137, 0, 4, 0 }, // middle
+  { -1275, -1079, 1221, 250, 92, 53 }, // middle
   { 0, 0, 0, 0, 0, 0 }, // ring
   { 0, 0, 0, 0, 0, 0 }, // little
   { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
@@ -388,9 +425,61 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),
 };
 
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   gag::Quaternion(), gag::Quaternion(), gag::Quaternion(), gag::Quaternion(),
+//   gag::Quaternion(), gag::Quaternion(), gag::Quaternion()
+// };
+
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   gag::Quaternion(0.35247537f, -0.61319828f, -0.35211861f, -0.61299402f), // thumb
+//   gag::Quaternion(0.46936727f, 0.61504865f, 0.31810823f, -0.54792041f), // index
+//   gag::Quaternion(0.17019829f, 0.02368968f, 0.83131582f, 0.52856916f), // middle
+//   gag::Quaternion(), // ring unavailable
+//   gag::Quaternion(), // little unavailable
+//   gag::Quaternion(0.11589351f, -0.37733892f, 0.91770566f, 0.04472613f), // wrist aux (accel-only used in this sketch)
+//   gag::Quaternion(0.40593845f, 0.59399652f, -0.52753276f, 0.45176476f), // wrist MPU9250
+// };
+
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   gag::Quaternion(0.66440964f, -0.69468093f, 0.12043634f, -0.24793841f), // thumb
+//   gag::Quaternion(0.72164232f, 0.62974131f, -0.11885974f, -0.26178384f), // index
+//   gag::Quaternion(0.80205142f, -0.55100751f, -0.10250099f, -0.20639268f), // middle
+//   gag::Quaternion(), // ring unavailable
+//   gag::Quaternion(), // little unavailable
+//   gag::Quaternion(0.11736750f, -0.37685826f, 0.91768903f, 0.04527392f), // wrist aux (accel-only used in this sketch)
+//   gag::Quaternion(0.40989569f, 0.59185290f, -0.53296620f, 0.44457042f), // wrist MPU9250
+// };
+
+
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   gag::Quaternion(0.76024026f, -0.60707730f, 0.12100079f, -0.19710624f), // thumb
+//   gag::Quaternion(0.79699636f, 0.54985666f, -0.12015722f, -0.21912745f), // index
+//   gag::Quaternion(0.87305993f, -0.47115448f, -0.00130841f, -0.12561166f), // middle
+//   gag::Quaternion(), // ring unavailable
+//   gag::Quaternion(), // little unavailable
+//   gag::Quaternion(0.12103056f, -0.32887104f, 0.93574667f, 0.03967112f), // wrist aux (accel-only used in this sketch)
+//   gag::Quaternion(0.47691688f, 0.58371955f, -0.59684050f, 0.27496034f), // wrist MPU9250
+// };
+
+
+// static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
+//   gag::Quaternion(0.70644176f, -0.68109763f, 0.08207926f, -0.17409514f), // thumb
+//   gag::Quaternion(0.74043977f, 0.62059861f, -0.12152651f, -0.22767897f), // index
+//   gag::Quaternion(0.82886106f, -0.53419530f, -0.05847419f, -0.15558179f), // middle
+//   gag::Quaternion(), // ring unavailable
+//   gag::Quaternion(), // little unavailable
+//   gag::Quaternion(0.11782799f, -0.23742391f, 0.96403748f, 0.01945009f), // wrist aux (accel-only used in this sketch)
+//   gag::Quaternion(0.41486070f, 0.58975530f, -0.53880137f, 0.43562889f), // wrist MPU9250
+// };
+
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
-  gag::Quaternion(), gag::Quaternion(), gag::Quaternion(), gag::Quaternion(),
-  gag::Quaternion(), gag::Quaternion(), gag::Quaternion()
+  gag::Quaternion(0.66707754f, -0.69925606f, 0.03005924f, -0.25523528f), // thumb
+  gag::Quaternion(0.72143364f, 0.62782055f, -0.05811472f, -0.28635225f), // index
+  gag::Quaternion(0.75385189f, -0.56104791f, -0.24378021f, -0.23979971f), // middle
+  gag::Quaternion(), // ring unavailable
+  gag::Quaternion(), // little unavailable
+  gag::Quaternion(0.13078532f, -0.28337017f, 0.94948405f, 0.03281225f), // wrist aux (accel-only used in this sketch)
+  gag::Quaternion(0.39162835f, 0.60506660f, -0.51878023f, 0.45977041f), // wrist MPU9250
 };
 
 // =====================
@@ -1477,6 +1566,63 @@ static void printQuaternionWxyz(const char* prefix, const gag::Quaternion& qIn) 
   Serial.printf("%s{ w=%.5f, x=%.5f, y=%.5f, z=%.5f }\n", prefix, q.w, q.x, q.y, q.z);
 }
 
+static void maybePrintMinorRotationOffsetCandidates() {
+#if GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES
+  const uint32_t now = millis();
+  if ((uint32_t)(now - g_lastMinorRotationOffsetPrintMs) < (uint32_t)GAG_MINOR_ROTATION_OFFSET_PRINT_INTERVAL_MS) return;
+  g_lastMinorRotationOffsetPrintMs = now;
+
+  gag::Quaternion currentPose[SENSOR_COUNT_ALL];
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    currentPose[s] = gag::Quaternion();
+    if (!physicalSensorQuaternionAvailable(s)) continue;
+    currentPose[s] = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
+  }
+  printMinorRotationOffsetArray(currentPose, "Current physical-fixed quaternions:");
+#endif
+}
+
+static void printMinorRotationOffsetArray(const gag::Quaternion* offsets, const char* title) {
+  if (title && title[0]) Serial.println(title);
+  Serial.println("static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    gag::Quaternion q = offsets[s];
+    q.normalizeInPlace();
+    Serial.printf("  gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff), // %s\n",
+                  q.w, q.x, q.y, q.z, SENSOR_OFFSET_LABELS[s]);
+  }
+  Serial.println("};");
+}
+
+static void captureMinorRotationOffsetsFromCurrentPose(uint8_t samples = 16) {
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
+    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, false, samples);
+    g_minorRotationOffset[s] = computeMinorRotationCompensation(qAvg, gag::Quaternion());
+  }
+}
+
+static void maybeHandleLeftButtonMinorRotationCapture() {
+#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
+  const bool pressed = readTtgoLeftButtonPressed();
+  const uint32_t now = millis();
+  const bool risingEdge = pressed && !g_leftButtonPrevPressed;
+  g_leftButtonPrevPressed = pressed;
+  if (!risingEdge) return;
+  if ((uint32_t)(now - g_leftButtonLastTriggerMs) < (uint32_t)GAG_TTGO_BUTTON_DEBOUNCE_MS) return;
+  g_leftButtonLastTriggerMs = now;
+
+  gag::Quaternion previousOffsets[SENSOR_COUNT_ALL];
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) previousOffsets[s] = g_minorRotationOffset[s];
+
+  captureMinorRotationOffsetsFromCurrentPose(16);
+  Serial.println("Left button capture: current pose set as ideal for minor rotation offsets.");
+  printMinorRotationOffsetArray(previousOffsets, "Previous g_minorRotationOffset:");
+  printMinorRotationOffsetArray(g_minorRotationOffset, "Updated g_minorRotationOffset:");
+  printRotationOffsetsAtBoot();
+#endif
+}
+
 static void printRotationOffsetsAtBoot() {
   Serial.println("Rotation offsets:");
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
@@ -1712,6 +1858,10 @@ static gag::viz::FrameInput buildVizFrame() {
 void setup() {
   Serial.begin(115200);
   delay(100);
+#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
+  pinMode(GAG_TTGO_LEFT_BUTTON_PIN, INPUT);
+  g_leftButtonPrevPressed = readTtgoLeftButtonPressed();
+#endif
 
   tft.init();
   tft.setRotation(GAG_TFT_ROTATION); // TFT_eSPI rotates the whole UI, including text primitives.
@@ -1726,7 +1876,7 @@ void setup() {
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     g_offsets.setHardware(i, DEFAULT_HW_OFFSETS[i]);
     g_offsets.setSoftwareQuaternion(i, gag::Quaternion());
-    g_minorRotationOffset[i] = gag::Quaternion();
+    // g_minorRotationOffset[i] = gag::Quaternion();
   }
 
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
@@ -1798,6 +1948,8 @@ void loop() {
   feedRecognizerFromCurrentPose();
   updateVibrations();
   maybeLogSerialSensorQuaternions();
+  maybePrintMinorRotationOffsetCandidates();
+  maybeHandleLeftButtonMinorRotationCapture();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
