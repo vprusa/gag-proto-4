@@ -122,7 +122,11 @@ enum SensorIndex : uint8_t {
 };
 
 // [0] wrist MPU9250, [1..5] fingers
-const uint8_t ACTIVE_CHANNELS[] = {1, 0, 7, 3, 4, 5};
+// const uint8_t ACTIVE_CHANNELS[] = {1, 0, 7, 3, 4, 5};
+// const uint8_t ACTIVE_CHANNELS[] = {1, 7, 0, 3, 4, 5};
+// const uint8_t ACTIVE_CHANNELS[] = {0, 3, 4, 7, 1, 5};
+// const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4, 7, 1, 5};
+const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4};
 const uint8_t NUM_ACTIVE_IMUS = sizeof(ACTIVE_CHANNELS) / sizeof(ACTIVE_CHANNELS[0]);
 static const uint8_t CH_GY511 = 2;
 
