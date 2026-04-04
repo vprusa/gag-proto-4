@@ -103,10 +103,18 @@
 #define GAG_TFT_ROTATION 0  // Previous build used 1; 0 rotates the whole UI 90° CCW.
 #endif
 
+#ifndef GAG_ENABLE_FIFO_REPORT
+#define GAG_ENABLE_FIFO_REPORT 0
+#endif
+
+#ifndef GAG_ENABLE_WRIST_MPU_PROBE_LOG
+#define GAG_ENABLE_WRIST_MPU_PROBE_LOG 0
+#endif
+
 #define GAG_WRIST_QUAT_SOURCE_MPU9250 0
 #define GAG_WRIST_QUAT_SOURCE_GY511   1
 #ifndef GAG_WRIST_QUAT_SOURCE
-#define GAG_WRIST_QUAT_SOURCE GAG_WRIST_QUAT_SOURCE_GY511
+#define GAG_WRIST_QUAT_SOURCE GAG_WRIST_QUAT_SOURCE_MPU9250
 #endif
 
 #if (GAG_WRIST_QUAT_SOURCE != GAG_WRIST_QUAT_SOURCE_MPU9250) &&     (GAG_WRIST_QUAT_SOURCE != GAG_WRIST_QUAT_SOURCE_GY511)
@@ -124,52 +132,54 @@
 #define PIN_PCA_A2    27
 #define DRIVE_PCA_ADDR_PINS  false
 #define PCA9548A_BASE_ADDR   0x70
+#define MPU9250_ADDR_DEFAULT 0x68
 
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
+static uint8_t g_wristMpuAddr = MPU9250_ADDR_DEFAULT;
 
 // =====================
 // Sensor topology
 // =====================
 enum SensorIndex : uint8_t {
-  SENSOR_WRIST = 0,
-  SENSOR_THUMB = 1,
-  SENSOR_INDEX = 2,
-  SENSOR_MIDDLE = 3,
-  SENSOR_RING = 4,
-  SENSOR_LITTLE = 5,
-  SENSOR_WRIST_AUX = 6,
+  SENSOR_THUMB = 0,
+  SENSOR_INDEX = 1,
+  SENSOR_MIDDLE = 2,
+  SENSOR_RING = 3,
+  SENSOR_LITTLE = 4,
+  SENSOR_WRIST_AUX = 5,
+  SENSOR_WRIST = 6,
   SENSOR_COUNT_ALL = 7,
+  SENSOR_COUNT_FINGERS = 5,
   SENSOR_COUNT_HAND = 6,
 };
 
-// [0] wrist MPU9250, [1..5] fingers
-// const uint8_t ACTIVE_CHANNELS[] = {1, 0, 7, 3, 4, 5};
-// const uint8_t ACTIVE_CHANNELS[] = {1, 7, 0, 3, 4, 5};
-// const uint8_t ACTIVE_CHANNELS[] = {0, 3, 4, 7, 1, 5};
-const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4, 7, 1, 5};
-// const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4};
-const uint8_t NUM_ACTIVE_IMUS = sizeof(ACTIVE_CHANNELS) / sizeof(ACTIVE_CHANNELS[0]);
+static const uint8_t CH_MPU9250 = 1;
 static const uint8_t CH_GY511 = 2;
+
+// Per-sensor PCA9548A channel map in logical sensor order:
+// thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250.
+// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511, CH_MPU9250};
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
 
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
-  false, // wrist MPU9250
   true,  // thumb
   true,  // index
   true,  // middle
   false, // ring
   false, // little
   true,  // wrist aux GY-511
+  // true,  // wrist MPU9250
+  false,  // wrist MPU9250
 };
 
-// Indexes into ACTIVE_CHANNELS / roll_ / pitch_ / yaw_ arrays.
 static const uint8_t FINGER_MAP[5] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE};
 
 // =====================
 // Optional vibration motors
 // =====================
 #if GAG_ENABLE_VIBRATION
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
 static const bool MOTOR_ACTIVE_HIGH = true;
 struct MotorState { bool active = false; uint32_t until_ms = 0; };
 static MotorState g_motorState[SENSOR_COUNT_ALL];
@@ -185,13 +195,13 @@ static gag::viz::TtgoDisplayViz g_viz;
 // Colors per sensor
 // =====================
 static const uint16_t SENSOR_COLORS[SENSOR_COUNT_ALL] = {
-  TFT_RED,      // wrist MPU9250
   TFT_YELLOW,   // thumb
   TFT_GREEN,    // index
   TFT_CYAN,     // middle
   TFT_MAGENTA,  // ring
   TFT_ORANGE,   // little
-  TFT_BLUE      // wrist aux GY-511
+  TFT_BLUE,     // wrist aux GY-511
+  TFT_RED       // wrist MPU9250
 };
 
 // =====================
@@ -221,11 +231,11 @@ static inline float deltaAngleDeg(float a, float b){ return wrap180(a - b); }
 // =====================
 // IMU state
 // =====================
-MPU6050 mpu[NUM_ACTIVE_IMUS];
-float roll_[NUM_ACTIVE_IMUS]  = {0};
-float pitch_[NUM_ACTIVE_IMUS] = {0};
-float yaw_[NUM_ACTIVE_IMUS]   = {0};
-unsigned long lastT[NUM_ACTIVE_IMUS] = {0};
+MPU6050 mpu[SENSOR_COUNT_ALL];
+float roll_[SENSOR_COUNT_ALL]  = {0};
+float pitch_[SENSOR_COUNT_ALL] = {0};
+float yaw_[SENSOR_COUNT_ALL]   = {0};
+unsigned long lastT[SENSOR_COUNT_ALL] = {0};
 const float alpha = 0.98f;
 
 bool wristMagOk = false;
@@ -265,13 +275,13 @@ unsigned long gy511LastT = 0;
 // };
 
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
-  { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
   { 60, 171, -184, 1, 0, 0 }, // thumb
   { -47, 80, -204, -2, 1, 1 }, // index
   { 110, 86, -137, 0, 4, 0 }, // middle
   { 0, 0, 0, 0, 0, 0 }, // ring
   { 0, 0, 0, 0, 0, 0 }, // little
   { 297, 2305, 2130, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
+  { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -286,13 +296,13 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
 // };
 
 static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
-  "wrist MPU9250",
   "thumb",
   "index",
   "middle",
   "ring",
   "little",
   "wrist aux (accel-only used in this sketch)",
+  "wrist MPU9250",
 };
 
 // Default per-sensor mounting compensation applied in the sensor's local/body
@@ -318,13 +328,20 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
 // =====================
 // MPU9250 / AK8963 registers
 // =====================
-#define MPU9250_ADDR   0x68
+#define MPU6050_ADDR   0x68
+#define MPU9250_ADDR_DEFAULT 0x68
+#define MPU9250_ADDR_ALT     0x69
 #define AK8963_ADDR    0x0C
 #define REG_PWR_MGMT_1     0x6B
 #define REG_GYRO_CONFIG    0x1B
 #define REG_ACCEL_CONFIG   0x1C
 #define REG_ACCEL_XOUT_H   0x3B
+#define REG_FIFO_EN        0x23
 #define REG_USER_CTRL      0x6A
+#define REG_FIFO_COUNT_H   0x72
+#define REG_FIFO_COUNT_L   0x73
+#define REG_FIFO_R_W       0x74
+#define REG_WHO_AM_I       0x75
 #define REG_INT_PIN_CFG    0x37
 #define AK8963_WHO_AM_I    0x00
 #define AK8963_ST1         0x02
@@ -339,7 +356,10 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
 #define LSM_MAG_ADDR       0x1E
 #define LSM_CTRL_REG1_A    0x20
 #define LSM_CTRL_REG4_A    0x23
+#define LSM_CTRL_REG5_A    0x24
 #define LSM_OUT_X_L_A      0x28
+#define LSM_FIFO_CTRL_REG_A 0x2E
+#define LSM_FIFO_SRC_REG_A  0x2F
 #define LSM_CRA_REG_M      0x00
 #define LSM_CRB_REG_M      0x01
 #define LSM_MR_REG_M       0x02
@@ -387,6 +407,88 @@ static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t*buf, uint8_t len){
   Wire.endTransmission(false);
   Wire.requestFrom((int)addr, (int)len);
   for (uint8_t i = 0; i < len && Wire.available(); ++i) buf[i] = Wire.read();
+}
+
+static uint8_t detectWristMpuAddress() {
+  pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
+  const uint8_t who68 = i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I);
+  if (who68 == 0x71 || who68 == 0x73) return MPU9250_ADDR_DEFAULT;
+  const uint8_t who69 = i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I);
+  if (who69 == 0x71 || who69 == 0x73) return MPU9250_ADDR_ALT;
+  return 0;
+}
+
+static void updateWristMpuAddress() {
+  const uint8_t detected = detectWristMpuAddress();
+  if (detected != 0) g_wristMpuAddr = detected;
+}
+
+static uint8_t wristMpuAddress() {
+  return g_wristMpuAddr;
+}
+
+
+static void printFifoCapabilityReportForSensor(uint8_t sensorIdx) {
+  if (!isSensorEnabled(sensorIdx)) return;
+
+  if (sensorIdx == SENSOR_WRIST_AUX) {
+    pcaSelect(CH_GY511);
+    const uint8_t magWho = i2cReadByte(LSM_MAG_ADDR, 0x0A);
+    const uint8_t ctrl5a = i2cReadByte(LSM_ACC_ADDR, LSM_CTRL_REG5_A);
+    const uint8_t fifoCtrl = i2cReadByte(LSM_ACC_ADDR, LSM_FIFO_CTRL_REG_A);
+    const uint8_t fifoSrc = i2cReadByte(LSM_ACC_ADDR, LSM_FIFO_SRC_REG_A);
+    const bool fifoEnabled = (ctrl5a & 0x40u) != 0;
+    const uint8_t fifoMode = (uint8_t)((fifoCtrl >> 6) & 0x03u);
+    const uint8_t fifoSamples = (uint8_t)(fifoSrc & 0x1Fu);
+
+    Serial.printf("FIFO sensor=%u label=%s type=GY-511/LSM303DLHC accel+mag mag_who=0x%02X\n",
+                  (unsigned)sensorIdx, SENSOR_OFFSET_LABELS[sensorIdx], (unsigned)magWho);
+    Serial.println("  accel_fifo_support=yes");
+    Serial.println("  mag_fifo_support=no");
+    Serial.printf("  accel_fifo_enabled=%s ctrl5_a=0x%02X fifo_ctrl_a=0x%02X fifo_src_a=0x%02X mode=%u samples=%u\n",
+                  fifoEnabled ? "yes" : "no",
+                  (unsigned)ctrl5a,
+                  (unsigned)fifoCtrl,
+                  (unsigned)fifoSrc,
+                  (unsigned)fifoMode,
+                  (unsigned)fifoSamples);
+    Serial.println("  firmware_uses_fifo=no direct register polling");
+    return;
+  }
+
+  const uint8_t ch = ACTIVE_CHANNELS[sensorIdx];
+  pcaSelect(ch);
+  const uint8_t mpuAddr = (sensorIdx == SENSOR_WRIST) ? wristMpuAddress() : MPU6050_ADDR;
+  const uint8_t who = i2cReadByte(mpuAddr, REG_WHO_AM_I);
+  const uint8_t fifoEn = i2cReadByte(mpuAddr, REG_FIFO_EN);
+  const uint8_t userCtrl = i2cReadByte(mpuAddr, REG_USER_CTRL);
+  const uint8_t fifoCountH = i2cReadByte(mpuAddr, REG_FIFO_COUNT_H);
+  const uint8_t fifoCountL = i2cReadByte(mpuAddr, REG_FIFO_COUNT_L);
+  const uint16_t fifoCount = (uint16_t)(((uint16_t)fifoCountH << 8) | fifoCountL);
+  const bool fifoEnabled = (userCtrl & 0x40u) != 0;
+
+  const char* sensorType = (sensorIdx == SENSOR_WRIST) ? "MPU9250-class wrist IMU" : "MPU6050-class finger IMU";
+  Serial.printf("FIFO sensor=%u label=%s type=%s addr=0x%02X who_am_i=0x%02X channel=%u\n",
+                (unsigned)sensorIdx,
+                SENSOR_OFFSET_LABELS[sensorIdx],
+                sensorType,
+                (unsigned)mpuAddr,
+                (unsigned)who,
+                (unsigned)ch);
+  Serial.println("  fifo_support=yes");
+  Serial.printf("  fifo_enabled=%s user_ctrl=0x%02X fifo_en=0x%02X fifo_count=%u\n",
+                fifoEnabled ? "yes" : "no",
+                (unsigned)userCtrl,
+                (unsigned)fifoEn,
+                (unsigned)fifoCount);
+  Serial.println("  firmware_uses_fifo=no direct accel/gyro reads");
+}
+
+static void printFifoCapabilityReport() {
+  Serial.println("FIFO capability report:");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    printFifoCapabilityReportForSensor(s);
+  }
 }
 
 // =====================
@@ -499,7 +601,24 @@ static gag::Quaternion eulerSensorToQuat(float rollDeg, float pitchDeg, float ya
 }
 
 static inline bool isFingerSensor(uint8_t sensorIdx) {
-  return sensorIdx >= SENSOR_THUMB && sensorIdx <= SENSOR_LITTLE;
+  return sensorIdx <= SENSOR_LITTLE;
+}
+
+static inline bool isMpuBackedSensor(uint8_t sensorIdx) {
+  return sensorIdx < SENSOR_COUNT_ALL && sensorIdx != SENSOR_WRIST_AUX;
+}
+
+static inline uint8_t sensorToVizSlot(uint8_t sensorIdx) {
+  switch (sensorIdx) {
+    case SENSOR_WRIST: return 0;
+    case SENSOR_THUMB: return 1;
+    case SENSOR_INDEX: return 2;
+    case SENSOR_MIDDLE: return 3;
+    case SENSOR_RING: return 4;
+    case SENSOR_LITTLE: return 5;
+    case SENSOR_WRIST_AUX: return 6;
+    default: return 7;
+  }
 }
 
 static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az,
@@ -570,7 +689,7 @@ static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
     return gy511Ok;
   }
-  return sensorIdx < NUM_ACTIVE_IMUS;
+  return isMpuBackedSensor(sensorIdx);
 }
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
@@ -680,7 +799,7 @@ static void updateGY511(){
 static bool initWristMagAK8963(){
   if (!isSensorEnabled(SENSOR_WRIST)) return false;
   pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
-  i2cWriteByte(MPU9250_ADDR, REG_INT_PIN_CFG, 0x02); // bypass enable
+  i2cWriteByte(wristMpuAddress(), REG_INT_PIN_CFG, 0x02); // bypass enable
   delay(10);
   uint8_t who = i2cReadByte(AK8963_ADDR, AK8963_WHO_AM_I);
   if (who != 0x48) return false;
@@ -719,13 +838,26 @@ static void updateWristMagYaw(){
 // =====================
 static bool initOneIMU(uint8_t idx){
   if (!isSensorEnabled(idx)) return true;
+  if (!isMpuBackedSensor(idx)) return true;
   const uint8_t ch = ACTIVE_CHANNELS[idx];
   pcaSelect(ch);
 
   if (idx == SENSOR_WRIST) {
-    i2cWriteByte(MPU9250_ADDR, REG_PWR_MGMT_1, 0x00); delay(10);
-    i2cWriteByte(MPU9250_ADDR, REG_GYRO_CONFIG, 0x00);
-    i2cWriteByte(MPU9250_ADDR, REG_ACCEL_CONFIG, 0x00);
+    updateWristMpuAddress();
+    const uint8_t wristAddr = wristMpuAddress();
+    const uint8_t wristWho = (wristAddr != 0) ? i2cReadByte(wristAddr, REG_WHO_AM_I) : 0;
+    #if GAG_ENABLE_WRIST_MPU_PROBE_LOG
+    Serial.printf("Wrist MPU probe: ch=%u addr68=0x%02X addr69=0x%02X selected=0x%02X who=0x%02X\n",
+                  (unsigned)ch,
+                  (unsigned)i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I),
+                  (unsigned)i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I),
+                  (unsigned)wristAddr,
+                  (unsigned)wristWho);
+    #endif
+    if (!(wristWho == 0x71 || wristWho == 0x73)) return false;
+    i2cWriteByte(wristAddr, REG_PWR_MGMT_1, 0x00); delay(10);
+    i2cWriteByte(wristAddr, REG_GYRO_CONFIG, 0x00);
+    i2cWriteByte(wristAddr, REG_ACCEL_CONFIG, 0x00);
     return true;
   }
 
@@ -747,12 +879,13 @@ static bool initOneIMU(uint8_t idx){
 
 static void updateOneIMU(uint8_t idx){
   if (!isSensorEnabled(idx)) return;
+  if (!isMpuBackedSensor(idx)) return;
   int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
   pcaSelect(ACTIVE_CHANNELS[idx]);
 
   if (idx == SENSOR_WRIST) {
     uint8_t buf[14] = {0};
-    i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 14);
+    i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
     ax = (int16_t)((buf[0]<<8)  | buf[1]);
     ay = (int16_t)((buf[2]<<8)  | buf[3]);
     az = (int16_t)((buf[4]<<8)  | buf[5]);
@@ -812,7 +945,7 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
   pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
   if (sensorIdx == SENSOR_WRIST) {
     uint8_t buf[14] = {0};
-    i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 14);
+    i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
     out.ax = (int16_t)((buf[0]<<8)  | buf[1]);
     out.ay = (int16_t)((buf[2]<<8)  | buf[3]);
     out.az = (int16_t)((buf[4]<<8)  | buf[5]);
@@ -829,7 +962,7 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
 }
 
 static bool hasConfiguredImuChannel(uint8_t sensorIdx) {
-  return sensorIdx < NUM_ACTIVE_IMUS && isSensorEnabled(sensorIdx);
+  return sensorIdx < SENSOR_COUNT_ALL && isMpuBackedSensor(sensorIdx) && isSensorEnabled(sensorIdx);
 }
 
 static bool isSensorAvailableForOffsetMeasurement(uint8_t sensorIdx) {
@@ -880,7 +1013,7 @@ static void printHardwareCalibrationStats(uint8_t sensorIdx,
 }
 
 static void applyCurrentHardwareOffsetsToInitializedSensors() {
-  for (uint8_t idx = 1; idx < NUM_ACTIVE_IMUS; ++idx) {
+  for (uint8_t idx = SENSOR_THUMB; idx <= SENSOR_LITTLE; ++idx) {
     if (!isSensorEnabled(idx)) continue;
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(idx);
     mpu[idx].setXAccelOffset(hw.ax);
@@ -1168,19 +1301,21 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 // =====================
 static void feedRecognizerFromCurrentPose() {
   const uint32_t now = millis();
-  for (uint8_t s = 0; s < SENSOR_COUNT_HAND; ++s) {
+  for (uint8_t s = SENSOR_THUMB; s <= SENSOR_LITTLE; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
-    gag::Quaternion qCorr = (s == SENSOR_WRIST)
-      ? correctedLogicalWristQuaternion()
-      : correctedQuaternionForPhysicalSensor(s);
+    gag::Quaternion qCorr = correctedQuaternionForPhysicalSensor(s);
     g_recognizer.processSample(mapToRecognizerSensor(s), qCorr, now);
+  }
+
+  if (selectedWristQuaternionAvailable()) {
+    g_recognizer.processSample(gag::Sensor::WRIST, correctedLogicalWristQuaternion(), now);
   }
 
   // Wrist accel can be used later for acceleration-driven gestures.
   if (isSensorEnabled(SENSOR_WRIST)) {
     pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
     uint8_t buf[6] = {0};
-    i2cReadBytes(MPU9250_ADDR, REG_ACCEL_XOUT_H, buf, 6);
+    i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 6);
     int16_t ax = (int16_t)((buf[0]<<8) | buf[1]);
     int16_t ay = (int16_t)((buf[2]<<8) | buf[3]);
     int16_t az = (int16_t)((buf[4]<<8) | buf[5]);
@@ -1199,19 +1334,16 @@ static gag::viz::FrameInput buildVizFrame() {
   gag::viz::FrameInput frame;
   frame.sensor_count = SENSOR_COUNT_ALL;
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
-    frame.base_color[i] = SENSOR_COLORS[i];
-    frame.present[i] = physicalSensorQuaternionAvailable(i);
+    const uint8_t vizIdx = sensorToVizSlot(i);
+    frame.base_color[vizIdx] = SENSOR_COLORS[i];
+    frame.present[vizIdx] = physicalSensorQuaternionAvailable(i);
   }
 
-  for (uint8_t s = 0; s < SENSOR_COUNT_HAND; ++s) {
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
-    frame.sensor_q[s] = correctedQuaternionForPhysicalSensor(s);
+    frame.sensor_q[sensorToVizSlot(s)] = correctedQuaternionForPhysicalSensor(s);
   }
 
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX)) {
-    frame.sensor_q[SENSOR_WRIST_AUX] = correctedQuaternionForPhysicalSensor(SENSOR_WRIST_AUX);
-  }
-  frame.present[SENSOR_WRIST_AUX] = physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX);
   frame.hand_wrist_q = correctedLogicalWristQuaternion();
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
@@ -1242,21 +1374,25 @@ void setup() {
     g_minorRotationOffset[i] = gag::Quaternion();
   }
 
-  for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) {
+  for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
+    if (!isSensorEnabled(i) || !isMpuBackedSensor(i)) continue;
     bool ok = initOneIMU(i);
     lastT[i] = millis();
     if (!ok) {
-      Serial.printf("IMU init failed idx=%u ch=%u\n", i, ACTIVE_CHANNELS[i]);
+      Serial.printf("IMU init failed idx=%u ch=%u wrist_addr=0x%02X\n", i, ACTIVE_CHANNELS[i], (unsigned)wristMpuAddress());
     }
     delay(10);
   }
 
   wristMagOk = initWristMagAK8963();
   gy511Ok = initGY511();
+  #if GAG_ENABLE_FIFO_REPORT
+  printFifoCapabilityReport();
+  #endif
 
   // Let filters settle.
   for (uint8_t warm = 0; warm < 20; ++warm) {
-    for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) updateOneIMU(i);
+    for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) updateOneIMU(i);
     updateWristMagYaw();
     updateGY511();
     delay(10);
@@ -1266,7 +1402,7 @@ void setup() {
 
   // Let the sensor fusion settle again after applying the calibrated offsets.
   for (uint8_t warm = 0; warm < 20; ++warm) {
-    for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) updateOneIMU(i);
+    for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) updateOneIMU(i);
     updateWristMagYaw();
     updateGY511();
     delay(10);
@@ -1289,7 +1425,7 @@ void setup() {
 }
 
 void loop() {
-  for (uint8_t i = 0; i < NUM_ACTIVE_IMUS; ++i) {
+  for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     updateOneIMU(i);
   }
   updateWristMagYaw();
