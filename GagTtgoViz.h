@@ -124,7 +124,7 @@ public:
     const int skeletonTop = 0;
     const int skeletonH   = 72;
     const int cubesTop    = skeletonTop + skeletonH;
-    const int cubesH      = 40;
+    const int cubesH      = 80;
     const int logTop      = cubesTop + cubesH;
     const int logH        = H - logTop;
 
@@ -325,7 +325,7 @@ private:
 
         const int cx = x0 + cellW / 2;
         const int cy = y0 + cellH / 2 + 1;
-        const int half = (cellH < cellW ? cellH : cellW) / 3;
+        const int half = ((cellH < cellW ? cellH : cellW) * 2) / 3;
 
         _tft->setTextFont(1);
         _tft->setTextColor(TFT_LIGHTGREY, _bg);

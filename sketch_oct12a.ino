@@ -125,8 +125,8 @@ enum SensorIndex : uint8_t {
 // const uint8_t ACTIVE_CHANNELS[] = {1, 0, 7, 3, 4, 5};
 // const uint8_t ACTIVE_CHANNELS[] = {1, 7, 0, 3, 4, 5};
 // const uint8_t ACTIVE_CHANNELS[] = {0, 3, 4, 7, 1, 5};
-// const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4, 7, 1, 5};
-const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4};
+const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4, 7, 1, 5};
+// const uint8_t ACTIVE_CHANNELS[] = {2, 0, 3, 4};
 const uint8_t NUM_ACTIVE_IMUS = sizeof(ACTIVE_CHANNELS) / sizeof(ACTIVE_CHANNELS[0]);
 static const uint8_t CH_GY511 = 2;
 
@@ -223,16 +223,22 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
 };
 
-// Software mounting corrections. Identity by default.
-// Use setSoftwareEulerDeg(sensor, xDeg, yDeg, zDeg) if a sensor is mounted rotated.
-static const float DEFAULT_SW_EULER_DEG[SENSOR_COUNT_ALL][3] = {
-  {0,0,0},
-  {0,0,0},
-  {0,0,0},
-  {0,0,0},
-  {0,0,0},
-  {0,0,0},
-  {0,0,0},
+// Default per-sensor mounting compensation applied before neutral offsets.
+// Fingers use a 90 deg clockwise compensation around Z because the GY25 boards
+// are mounted 90 deg counterclockwise. The wrist GY-511 uses the inverse of
+// its physical mounting: undo the 90 deg X rotation, then undo the 180 deg Z
+// rotation.
+static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
+  gag::Quaternion(),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)
+  ),
 };
 
 // =====================
@@ -429,6 +435,15 @@ static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   return eulerSensorToQuat(roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
 }
 
+static gag::Quaternion applyDefaultSensorRotation(uint8_t sensorIdx, const gag::Quaternion& rawIn) {
+  gag::Quaternion raw = rawIn;
+  raw.normalizeInPlace();
+  if (sensorIdx >= SENSOR_COUNT_ALL) return raw;
+  gag::Quaternion out = gag::Quaternion::mul(DEFAULT_SENSOR_ROTATION[sensorIdx], raw);
+  out.normalizeInPlace();
+  return out;
+}
+
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
   if (sensorIdx == SENSOR_WRIST_AUX) {
     return gy511Ok;
@@ -437,7 +452,7 @@ static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
 }
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
-  return g_offsets.applySoftwareOffset(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx));
+  return g_offsets.applySoftwareOffset(sensorIdx, applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx)));
 }
 
 static uint8_t selectedWristQuaternionPhysicalSensor() {
@@ -701,7 +716,7 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, uint8_t sampl
       if (sensorIdx == SENSOR_WRIST) updateWristMagYaw();
     }
 
-    gag::Quaternion q = rawQuaternionForPhysicalSensor(sensorIdx);
+    gag::Quaternion q = applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx));
     q.normalizeInPlace();
 
     if (!haveRef) { ref = q; haveRef = true; }
@@ -931,10 +946,7 @@ void setup() {
   // Load default offsets.
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     g_offsets.setHardware(i, DEFAULT_HW_OFFSETS[i]);
-    g_offsets.setSoftwareEulerDeg(i,
-                                  DEFAULT_SW_EULER_DEG[i][0],
-                                  DEFAULT_SW_EULER_DEG[i][1],
-                                  DEFAULT_SW_EULER_DEG[i][2]);
+    g_offsets.setSoftwareQuaternion(i, gag::Quaternion());
   }
 
   // Optional hardware offset measurement before IMU init.
