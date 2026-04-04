@@ -927,6 +927,7 @@ static void scheduleVibration(uint8_t sensorMask, uint16_t durationMs) {
   const uint32_t until = millis() + durationMs;
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     if (!(sensorMask & (1u << i))) continue;
+    if (g_motorState[i].active) continue;
     g_motorState[i].active = true;
     g_motorState[i].until_ms = until;
     setMotorOutput(i, true);
@@ -1072,12 +1073,13 @@ static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az
 }
 
 static gag::Quaternion fingerEulerToQuat(uint8_t sensorIdx, float rollDeg, float pitchDeg, float yawDeg) {
-  // After raw-axis remapping, finger X is aligned, but the finger IMU path
-  // still reports glove-local Y/Z swapped relative to the visualization frame.
-  // The index finger has the opposite local Z direction relative to the other
-  // finger modules, so flip its yaw sign only.
+  // After raw-axis remapping, the finger IMU modules still share a cyclic
+  // physical-frame mismatch relative to the glove visualization frame:
+  // sensor X -> glove Z, sensor Y -> glove X, sensor Z -> glove Y.
+  // Apply the same reorder for all finger sensors, while the index keeps its
+  // opposite local Z sign on yaw.
   const float gloveYawDeg = (sensorIdx == SENSOR_INDEX) ? -yawDeg : yawDeg;
-  return eulerSensorToQuat(rollDeg, gloveYawDeg, pitchDeg);
+  return eulerSensorToQuat(pitchDeg, gloveYawDeg, rollDeg);
 }
 
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
