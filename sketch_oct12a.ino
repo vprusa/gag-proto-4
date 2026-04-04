@@ -121,6 +121,14 @@ struct Vec3;
 #define GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS 100
 #endif
 
+#ifndef GAG_USE_MPU_DMP_QUAT_FIFO
+#define GAG_USE_MPU_DMP_QUAT_FIFO 0
+#endif
+
+#if GAG_USE_MPU_DMP_QUAT_FIFO
+#error "GAG_USE_MPU_DMP_QUAT_FIFO is reserved for a future DMP quaternion path; the current sketch preserves the old non-DMP pipeline only."
+#endif
+
 #ifndef GAG_ENABLE_MPU_FIFO
 #define GAG_ENABLE_MPU_FIFO 1
 #endif
@@ -1170,6 +1178,8 @@ static void updateWristMagYaw(){
 // =====================
 // IMU init/update
 // =====================
+// Current implementation keeps the original non-DMP accel/gyro pipeline.
+// A future DMP quaternion path should be wired under GAG_USE_MPU_DMP_QUAT_FIFO.
 static bool initOneIMU(uint8_t idx){
   if (!isSensorEnabled(idx)) return true;
   if (!isMpuBackedSensor(idx)) return true;
