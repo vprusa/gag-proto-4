@@ -126,7 +126,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_ENABLE_MPU9250_FIFO
-#define GAG_ENABLE_MPU9250_FIFO 0
+#define GAG_ENABLE_MPU9250_FIFO 1
 #endif
 
 #ifndef GAG_FIFO_RESET_INTERVAL_MS
@@ -386,17 +386,20 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
 #define MPU9250_ADDR_DEFAULT 0x68
 #define MPU9250_ADDR_ALT     0x69
 #define AK8963_ADDR    0x0C
-#define REG_PWR_MGMT_1     0x6B
+#define REG_SMPLRT_DIV     0x19
+#define REG_CONFIG         0x1A
 #define REG_GYRO_CONFIG    0x1B
 #define REG_ACCEL_CONFIG   0x1C
-#define REG_ACCEL_XOUT_H   0x3B
 #define REG_FIFO_EN        0x23
+#define REG_INT_PIN_CFG    0x37
+#define REG_INT_STATUS     0x3A
+#define REG_ACCEL_XOUT_H   0x3B
 #define REG_USER_CTRL      0x6A
+#define REG_PWR_MGMT_1     0x6B
 #define REG_FIFO_COUNT_H   0x72
 #define REG_FIFO_COUNT_L   0x73
 #define REG_FIFO_R_W       0x74
 #define REG_WHO_AM_I       0x75
-#define REG_INT_PIN_CFG    0x37
 #define AK8963_WHO_AM_I    0x00
 #define AK8963_ST1         0x02
 #define AK8963_HXL         0x03
@@ -542,12 +545,23 @@ static bool sensorCanUseRotationFifo(uint8_t sensorIdx) {
   return true;
 }
 
+static const uint8_t MPU_FIFO_PACKET_SIZE_BYTES = 12u;
+static const uint8_t MPU_FIFO_ACCEL_GYRO_ENABLE_MASK = 0x78u;
+static const uint8_t MPU_USER_CTRL_FIFO_EN = 0x40u;
+static const uint8_t MPU_USER_CTRL_FIFO_RESET = 0x04u;
+static const uint8_t MPU_INT_STATUS_FIFO_OVERFLOW = 0x10u;
+static const uint8_t MPU_CONFIG_DLPF_42HZ = 0x03u;
+static const uint8_t MPU_SMPLRT_DIV_200HZ = 4u;
+static const uint8_t MPU_PWR_CLKSEL_ZGYRO = 0x03u;
+
 static uint16_t fifoMaxBytesForSensor(uint8_t sensorIdx) {
   return (sensorIdx == SENSOR_WRIST) ? (uint16_t)GAG_MPU9250_FIFO_MAX_BYTES : (uint16_t)GAG_MPU6050_FIFO_MAX_BYTES;
 }
 
 static uint16_t fifoResetThresholdBytesForSensor(uint8_t sensorIdx) {
-  return (uint16_t)(fifoMaxBytesForSensor(sensorIdx) / 2u);
+  const uint16_t maxBytes = fifoMaxBytesForSensor(sensorIdx);
+  const uint16_t guardBytes = (uint16_t)(MPU_FIFO_PACKET_SIZE_BYTES * 2u);
+  return (maxBytes > guardBytes) ? (uint16_t)(maxBytes - guardBytes) : maxBytes;
 }
 
 static uint16_t readMpuFifoCountBytes(uint8_t sensorIdx) {
@@ -562,9 +576,12 @@ static void resetMpuFifo(uint8_t sensorIdx) {
   if (!sensorCanUseRotationFifo(sensorIdx)) return;
   pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
   const uint8_t addr = mpuAddressForSensor(sensorIdx);
-  i2cWriteByte(addr, REG_USER_CTRL, 0x04);
+  i2cWriteByte(addr, REG_FIFO_EN, 0x00);
+  i2cWriteByte(addr, REG_USER_CTRL, MPU_USER_CTRL_FIFO_RESET);
   delay(2);
-  i2cWriteByte(addr, REG_USER_CTRL, 0x40);
+  (void)i2cReadByte(addr, REG_INT_STATUS);
+  i2cWriteByte(addr, REG_FIFO_EN, MPU_FIFO_ACCEL_GYRO_ENABLE_MASK);
+  i2cWriteByte(addr, REG_USER_CTRL, MPU_USER_CTRL_FIFO_EN);
   g_lastFifoResetMs[sensorIdx] = millis();
 #else
   (void)sensorIdx;
@@ -578,10 +595,14 @@ static void configureMpuFifo(uint8_t sensorIdx) {
   const uint8_t addr = mpuAddressForSensor(sensorIdx);
   i2cWriteByte(addr, REG_USER_CTRL, 0x00);
   i2cWriteByte(addr, REG_FIFO_EN, 0x00);
-  i2cWriteByte(addr, REG_USER_CTRL, 0x04);
+  i2cWriteByte(addr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO);
+  i2cWriteByte(addr, REG_CONFIG, MPU_CONFIG_DLPF_42HZ);
+  i2cWriteByte(addr, REG_SMPLRT_DIV, MPU_SMPLRT_DIV_200HZ);
+  i2cWriteByte(addr, REG_USER_CTRL, MPU_USER_CTRL_FIFO_RESET);
   delay(2);
-  i2cWriteByte(addr, REG_FIFO_EN, 0x78);
-  i2cWriteByte(addr, REG_USER_CTRL, 0x40);
+  (void)i2cReadByte(addr, REG_INT_STATUS);
+  i2cWriteByte(addr, REG_FIFO_EN, MPU_FIFO_ACCEL_GYRO_ENABLE_MASK);
+  i2cWriteByte(addr, REG_USER_CTRL, MPU_USER_CTRL_FIFO_EN);
   g_lastFifoResetMs[sensorIdx] = millis();
 #else
   (void)sensorIdx;
@@ -593,15 +614,25 @@ static bool readMpuFifoMotion6(uint8_t sensorIdx, int16_t& ax, int16_t& ay, int1
   if (!sensorCanUseRotationFifo(sensorIdx)) return false;
   pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
   const uint8_t addr = mpuAddressForSensor(sensorIdx);
+  const uint8_t intStatus = i2cReadByte(addr, REG_INT_STATUS);
   const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
-  if (fifoCount < 12) return false;
-
-  uint8_t packet[12] = {0};
-  uint16_t remaining = fifoCount;
-  while (remaining >= 12) {
-    i2cReadBytes(addr, REG_FIFO_R_W, packet, 12);
-    remaining = (uint16_t)(remaining - 12);
+  if ((intStatus & MPU_INT_STATUS_FIFO_OVERFLOW) != 0u || fifoCount > fifoMaxBytesForSensor(sensorIdx)) {
+    resetMpuFifo(sensorIdx);
+    return false;
   }
+  if (fifoCount < MPU_FIFO_PACKET_SIZE_BYTES) return false;
+  if ((fifoCount % MPU_FIFO_PACKET_SIZE_BYTES) != 0u) {
+    resetMpuFifo(sensorIdx);
+    return false;
+  }
+
+  uint8_t packet[MPU_FIFO_PACKET_SIZE_BYTES] = {0};
+  uint16_t packetsRemaining = (uint16_t)(fifoCount / MPU_FIFO_PACKET_SIZE_BYTES);
+  while (packetsRemaining > 1u) {
+    i2cReadBytes(addr, REG_FIFO_R_W, packet, MPU_FIFO_PACKET_SIZE_BYTES);
+    --packetsRemaining;
+  }
+  i2cReadBytes(addr, REG_FIFO_R_W, packet, MPU_FIFO_PACKET_SIZE_BYTES);
 
   ax = (int16_t)((packet[0] << 8) | packet[1]);
   ay = (int16_t)((packet[2] << 8) | packet[3]);
@@ -619,11 +650,8 @@ static bool readMpuFifoMotion6(uint8_t sensorIdx, int16_t& ax, int16_t& ay, int1
 static void maybeResetMpuFifo(uint8_t sensorIdx) {
 #if GAG_ENABLE_MPU_FIFO
   if (!sensorCanUseRotationFifo(sensorIdx)) return;
-  const uint32_t now = millis();
-  const bool resetByTime = ((uint32_t)(now - g_lastFifoResetMs[sensorIdx]) >= GAG_FIFO_RESET_INTERVAL_MS);
   const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
-  const bool resetByLevel = (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx));
-  if (resetByTime || resetByLevel) {
+  if (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx)) {
     resetMpuFifo(sensorIdx);
   }
 #else
@@ -1151,7 +1179,7 @@ static bool initOneIMU(uint8_t idx){
                   (unsigned)wristWho);
     #endif
     if (!(wristWho == 0x71 || wristWho == 0x73)) return false;
-    i2cWriteByte(wristAddr, REG_PWR_MGMT_1, 0x00); delay(10);
+    i2cWriteByte(wristAddr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO); delay(10);
     i2cWriteByte(wristAddr, REG_GYRO_CONFIG, 0x00);
     i2cWriteByte(wristAddr, REG_ACCEL_CONFIG, 0x00);
     configureMpuFifo(idx);
