@@ -271,14 +271,14 @@ enum SensorIndex : uint8_t {
 };
 
 static const uint8_t CH_MPU9250 = 1;
-static const uint8_t CH_GY511 = 2;
-static const uint8_t CH_GY25 = 5;
+static const uint8_t CH_GY511 = 5;
+static const uint8_t CH_GY25 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
 // thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250, wrist GY25.
 // GY-511 and GY25 wrist sensors are swapped across channels 5 and 2; little still shares the old channel 5 slot while disabled.
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 5, CH_GY25, CH_MPU9250, CH_GY511};
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 7, 5, 0, CH_MPU9250, CH_GY511};
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY511, CH_MPU9250, CH_GY25 };
+// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 7, 5, 0, CH_MPU9250, CH_GY511};
 // static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 7, 5, 0, CH_MPU9250, CH_GY511};
 // static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 0, 5, 7, CH_MPU9250, CH_GY511};
 // static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
@@ -417,6 +417,7 @@ static inline Vec3 vecNormalize(const Vec3& v) {
 // IMU state
 // =====================
 MPU6050 mpu[SENSOR_COUNT_ALL];
+uint8_t g_sensorMpuAddr[SENSOR_COUNT_ALL] = { 0 };
 gag::Quaternion g_sensorFusionQuat[SENSOR_COUNT_ALL];
 bool g_sensorFusionInitialized[SENSOR_COUNT_ALL] = { false };
 bool g_sensorInitOk[SENSOR_COUNT_ALL] = { false };
@@ -693,17 +694,27 @@ static void printWristMpuDiagnostic() {
                 (int)ax, (int)ay, (int)az, (int)gx, (int)gy, (int)gz);
 }
 
-static uint8_t detectWristMpuAddress() {
-  pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
-  const uint8_t who68 = i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I);
-  if (who68 == 0x71 || who68 == 0x73) return MPU9250_ADDR_DEFAULT;
-  const uint8_t who69 = i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I);
-  if (who69 == 0x71 || who69 == 0x73) return MPU9250_ADDR_ALT;
+static uint8_t detectMpuAddressForSensor(uint8_t sensorIdx) {
+  if (sensorIdx >= SENSOR_COUNT_ALL || !isMpuBackedSensor(sensorIdx)) return 0;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  if (sensorIdx == SENSOR_WRIST) {
+    const uint8_t who68 = i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I);
+    if (who68 == 0x71 || who68 == 0x73) return MPU9250_ADDR_DEFAULT;
+    const uint8_t who69 = i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I);
+    if (who69 == 0x71 || who69 == 0x73) return MPU9250_ADDR_ALT;
+    return 0;
+  }
+  if (i2cAddressResponds(MPU6050_ADDR)) return MPU6050_ADDR;
+  if (i2cAddressResponds(MPU9250_ADDR_ALT)) return MPU9250_ADDR_ALT;
   return 0;
 }
 
+static inline bool usesDirectMpuRegisterAccess(uint8_t sensorIdx) {
+  return sensorIdx == SENSOR_WRIST;
+}
+
 static void updateWristMpuAddress() {
-  const uint8_t detected = detectWristMpuAddress();
+  const uint8_t detected = detectMpuAddressForSensor(SENSOR_WRIST);
   if (detected != 0) g_wristMpuAddr = detected;
 }
 
@@ -712,11 +723,9 @@ static uint8_t wristMpuAddress() {
 }
 
 static uint8_t mpuAddressForSensor(uint8_t sensorIdx) {
-  return (sensorIdx == SENSOR_WRIST) ? wristMpuAddress() : MPU6050_ADDR;
-}
-
-static inline bool usesDirectMpuRegisterAccess(uint8_t sensorIdx) {
-  return sensorIdx == SENSOR_WRIST || sensorIdx == SENSOR_WRIST_GY25;
+  if (sensorIdx == SENSOR_WRIST) return wristMpuAddress();
+  if (sensorIdx < SENSOR_COUNT_ALL && g_sensorMpuAddr[sensorIdx] != 0) return g_sensorMpuAddr[sensorIdx];
+  return MPU6050_ADDR;
 }
 
 static bool sensorCanUseRotationFifo(uint8_t sensorIdx) {
@@ -1570,12 +1579,12 @@ static bool initOneIMU(uint8_t idx) {
   pcaSelect(ch);
 
   if (usesDirectMpuRegisterAccess(idx)) {
-    uint8_t mpuAddr = MPU6050_ADDR;
+    const uint8_t mpuAddr = detectMpuAddressForSensor(idx);
     uint8_t who = 0;
     if (idx == SENSOR_WRIST) {
-      updateWristMpuAddress();
-      mpuAddr = wristMpuAddress();
-      who = (mpuAddr != 0) ? i2cReadByte(mpuAddr, REG_WHO_AM_I) : 0;
+      if (mpuAddr == 0) return false;
+      g_wristMpuAddr = mpuAddr;
+      who = i2cReadByte(mpuAddr, REG_WHO_AM_I);
 #if GAG_ENABLE_WRIST_MPU_PROBE_LOG
       Serial.printf("Wrist MPU probe: ch=%u addr68=0x%02X addr69=0x%02X selected=0x%02X who=0x%02X\n",
                     (unsigned)ch,
@@ -1585,8 +1594,9 @@ static bool initOneIMU(uint8_t idx) {
                     (unsigned)who);
 #endif
       if (!(who == 0x71 || who == 0x73)) return false;
-    } else if (!i2cAddressResponds(mpuAddr)) {
-      return false;
+    } else {
+      if (mpuAddr == 0) return false;
+      g_sensorMpuAddr[idx] = mpuAddr;
     }
     i2cWriteByte(mpuAddr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO);
     delay(10);
@@ -1596,7 +1606,9 @@ static bool initOneIMU(uint8_t idx) {
     return true;
   }
 
-  if (!i2cAddressResponds(MPU6050_ADDR)) return false;
+  const uint8_t mpuAddr = detectMpuAddressForSensor(idx);
+  if (mpuAddr == 0) return false;
+  g_sensorMpuAddr[idx] = mpuAddr;
   mpu[idx].initialize();
   bool ok = mpu[idx].testConnection();
   if (ok) {
@@ -2213,6 +2225,7 @@ static void resetFusionState() {
     g_sensorFusionQuat[i] = gag::Quaternion();
     g_sensorFusionInitialized[i] = false;
     g_sensorInitOk[i] = false;
+    g_sensorMpuAddr[i] = 0;
     lastT[i] = now;
     g_lastFifoResetMs[i] = 0;
   }
