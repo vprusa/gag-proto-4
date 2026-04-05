@@ -178,6 +178,7 @@ private:
       case 4: return "R";
       case 5: return "L";
       case 6: return "W1";
+      case 7: return "W2";
       default: return "-";
     }
   }

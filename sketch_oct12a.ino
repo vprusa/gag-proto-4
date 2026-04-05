@@ -7,7 +7,7 @@
  * What this version keeps from the newer TTGO sketch:
  *   - ESP32 TTGO / T-Display target
  *   - PCA9548A/TCA9548A mux
- *   - wrist MPU9250 + 5 finger MPU6050-class sensors
+ *   - wrist GY25 + wrist MPU9250 + 5 finger MPU6050-class sensors
  *   - wrist auxiliary GY-511 (LSM303DLHC accel+mag)
  *
  * What this version ports from the older firmware:
@@ -20,9 +20,10 @@
  *   - hardware and software offsets in a dedicated store
  *
  * Assumptions used in this migration:
- *   - sensor index 0 = wrist MPU9250
- *   - sensor index 1..5 = thumb, index, middle, ring, little
- *   - sensor index 6 = wrist auxiliary GY-511
+ *   - sensor index 0..4 = thumb, index, middle, ring, little
+ *   - sensor index 5 = wrist GY25
+ *   - sensor index 6 = wrist MPU9250
+ *   - sensor index 7 = wrist auxiliary GY-511
  *   - software offsets are used to neutralize the current pose at boot by default
  *   - hardware offsets are stored in the same ax/ay/az/gx/gy/gz format as the old code
  */
@@ -211,15 +212,15 @@ struct Vec3;
 // #define GAG_MPU9250_FIFO_MAX_BYTES 2048U
 #endif
 
-#define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
-#define GAG_PRIMARY_WRIST_SENSOR_GY511 1
+#define GAG_PRIMARY_WRIST_SENSOR_GY25 0
+#define GAG_PRIMARY_WRIST_SENSOR_MPU9250 1
+#define GAG_PRIMARY_WRIST_SENSOR_GY511 2
 #ifndef GAG_PRIMARY_WRIST_SENSOR
-#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
-// #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
+#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY25
 #endif
 
-#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
-#error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_MPU9250 or GAG_PRIMARY_WRIST_SENSOR_GY511"
+#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY25) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
+#error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_GY25, GAG_PRIMARY_WRIST_SENSOR_MPU9250, or GAG_PRIMARY_WRIST_SENSOR_GY511"
 #endif
 
 // =====================
@@ -261,20 +262,24 @@ enum SensorIndex : uint8_t {
   SENSOR_MIDDLE = 2,
   SENSOR_RING = 3,
   SENSOR_LITTLE = 4,
-  SENSOR_WRIST_AUX = 5,
-  SENSOR_WRIST = 6,
-  SENSOR_COUNT_ALL = 7,
+  SENSOR_WRIST_GY25 = 5,
+  SENSOR_WRIST_MPU9250 = 6,
+  SENSOR_WRIST_GY511 = 7,
+  SENSOR_COUNT_ALL = 8,
   SENSOR_COUNT_FINGERS = 5,
   SENSOR_COUNT_HAND = 6,
 };
 
+static constexpr uint8_t SENSOR_WRIST = SENSOR_WRIST_MPU9250;
+static constexpr uint8_t SENSOR_WRIST_AUX = SENSOR_WRIST_GY511;
+
+static const uint8_t CH_GY25 = 5;
 static const uint8_t CH_MPU9250 = 1;
-static const uint8_t CH_GY511 = 5;
+static const uint8_t CH_GY511 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
-// thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250.
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY511, CH_MPU9250 };
-
+// thumb, index, middle, ring, little, wrist GY25, wrist MPU9250, wrist GY-511.
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY25, CH_MPU9250, CH_GY511 };
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   true,   // thumb
@@ -282,8 +287,9 @@ static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   true,   // middle
   false,  // ring
   false,  // little
-  true,   // wrist aux GY-511
+  true,   // wrist GY25
   true,   // wrist MPU9250
+  true,   // wrist GY-511
 };
 
 static const uint8_t FINGER_MAP[5] = { SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE };
@@ -309,7 +315,7 @@ static uint32_t g_restartButtonLastTriggerMs = 0;
 #if GAG_ENABLE_VIBRATION
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27 };
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27, -1 };
 static const bool MOTOR_ACTIVE_HIGH = true;
 struct MotorState {
   bool active = false;
@@ -333,8 +339,9 @@ static const uint16_t SENSOR_COLORS[SENSOR_COUNT_ALL] = {
   TFT_CYAN,     // middle
   TFT_MAGENTA,  // ring
   TFT_ORANGE,   // little
-  TFT_BLUE,     // wrist aux GY-511
-  TFT_RED       // wrist MPU9250
+  TFT_RED,      // wrist GY25
+  TFT_YELLOW,   // wrist MPU9250
+  TFT_BLUE      // wrist GY-511
 };
 
 // =====================
@@ -482,8 +489,9 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { -1367, -1257, 1421, 250, 92, 52 },   // middle
   { 0, 0, 0, 0, 0, 0 },                  // ring
   { 0, 0, 0, 0, 0, 0 },                  // little
-  { -24, 2376, 2781, 0, 0, 0 },          // wrist aux (accel-only used in this sketch)
-  { 2840, 4096, 6144, -144, 39, -22 },    // wrist MPU9250
+  { 0, 0, 0, 0, 0, 0 },                  // wrist GY25
+  { 2840, 4096, 6144, -144, 39, -22 },   // wrist MPU9250
+  { -24, 2376, 2781, 0, 0, 0 },          // wrist GY-511 (accel-only used in this sketch)
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -503,27 +511,30 @@ static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
   "middle",
   "ring",
   "little",
-  "wrist aux (accel-only used in this sketch)",
+  "wrist GY25",
   "wrist MPU9250",
+  "wrist GY-511 (accel-only used in this sketch)",
 };
 
 // Default per-sensor mounting compensation applied in the sensor's local/body
 // frame before neutral offsets.
 // Finger IMUs: +90 deg CCW around Z.
-// Wrist GY-511: +90 deg CCW around Z, then -90 deg around X.
+// Wrist GY25: -90 deg around Z.
 // Wrist MPU9250: +180 deg around Z, then +90 deg around Y.
+// Wrist GY-511: +90 deg CCW around Z, then -90 deg around X.
 static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-  gag::Quaternion::mul(
-    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
   gag::Quaternion::mul(
     gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
     gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
 };
 
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
@@ -532,8 +543,9 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(0.87555826f, -0.05684654f, -0.47437924f, 0.07162798f),  // middle
   gag::Quaternion(),                                                      // ring
   gag::Quaternion(),                                                      // little
-  gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist aux GY-511
+  gag::Quaternion(),                                                      // wrist GY25
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
+  gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist GY-511
 };
 
 // =====================
@@ -908,7 +920,7 @@ static void printFifoCapabilityReportForSensor(uint8_t sensorIdx) {
 
   const uint8_t ch = ACTIVE_CHANNELS[sensorIdx];
   pcaSelect(ch);
-  const uint8_t mpuAddr = (sensorIdx == SENSOR_WRIST) ? wristMpuAddress() : MPU6050_ADDR;
+  const uint8_t mpuAddr = (sensorIdx == SENSOR_WRIST_MPU9250) ? wristMpuAddress() : MPU6050_ADDR;
   const uint8_t who = i2cReadByte(mpuAddr, REG_WHO_AM_I);
   const uint8_t fifoEn = i2cReadByte(mpuAddr, REG_FIFO_EN);
   const uint8_t userCtrl = i2cReadByte(mpuAddr, REG_USER_CTRL);
@@ -917,9 +929,11 @@ static void printFifoCapabilityReportForSensor(uint8_t sensorIdx) {
   const uint16_t fifoCount = (uint16_t)(((uint16_t)fifoCountH << 8) | fifoCountL);
   const bool fifoEnabled = (userCtrl & 0x40u) != 0;
 
-  const char* sensorType = (sensorIdx == SENSOR_WRIST)
-                             ? "MPU9250-class wrist IMU"
-                             : "MPU6050-class finger IMU";
+  const char* sensorType = (sensorIdx == SENSOR_WRIST_GY25)
+                             ? "GY25 / MPU6050-class wrist IMU"
+                             : ((sensorIdx == SENSOR_WRIST_MPU9250)
+                                  ? "MPU9250-class wrist IMU"
+                                  : "MPU6050-class finger IMU");
   Serial.printf("FIFO sensor=%u label=%s type=%s addr=0x%02X who_am_i=0x%02X channel=%u\n",
                 (unsigned)sensorIdx,
                 SENSOR_OFFSET_LABELS[sensorIdx],
@@ -1079,7 +1093,10 @@ static void execMouseAction(const gag::MouseAction& mouse) {
 // =====================
 static inline gag::Sensor mapToRecognizerSensor(uint8_t sensorIdx) {
   switch (sensorIdx) {
-    case SENSOR_WRIST: return gag::Sensor::WRIST;
+    case SENSOR_WRIST_GY25:
+    case SENSOR_WRIST_MPU9250:
+    case SENSOR_WRIST_GY511:
+      return gag::Sensor::WRIST;
     case SENSOR_THUMB: return gag::Sensor::THUMB;
     case SENSOR_INDEX: return gag::Sensor::INDEX;
     case SENSOR_MIDDLE: return gag::Sensor::MIDDLE;
@@ -1099,14 +1116,15 @@ static inline bool isMpuBackedSensor(uint8_t sensorIdx) {
 
 static inline uint8_t sensorToVizSlot(uint8_t sensorIdx) {
   switch (sensorIdx) {
-    case SENSOR_WRIST: return 0;
+    case SENSOR_WRIST_GY25: return 0;
     case SENSOR_THUMB: return 1;
     case SENSOR_INDEX: return 2;
     case SENSOR_MIDDLE: return 3;
     case SENSOR_RING: return 4;
     case SENSOR_LITTLE: return 5;
-    case SENSOR_WRIST_AUX: return 6;
-    default: return 6;
+    case SENSOR_WRIST_MPU9250: return 6;
+    case SENSOR_WRIST_GY511: return 7;
+    default: return 7;
   }
 }
 
@@ -1358,16 +1376,32 @@ static gag::Quaternion applyWristPivotRotationCorrection(uint8_t sensorIdx, cons
   return q;
 }
 
+static uint8_t firstAvailableWristSensor(uint8_t a, uint8_t b, uint8_t c) {
+  if (physicalSensorQuaternionAvailable(a)) return a;
+  if (physicalSensorQuaternionAvailable(b)) return b;
+  if (physicalSensorQuaternionAvailable(c)) return c;
+  return a;
+}
+
 // Select the single wrist sensor used by the hand skeleton and recognizer.
-// Both wrist sensors can still be updated and drawn as separate cubes.
+// All physical wrist sensors can still be updated and drawn as separate cubes.
 static uint8_t selectedWristQuaternionPhysicalSensor() {
 #if GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_GY511
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX)) return SENSOR_WRIST_AUX;
-  return SENSOR_WRIST;
+  return firstAvailableWristSensor(SENSOR_WRIST_GY511, SENSOR_WRIST_GY25, SENSOR_WRIST_MPU9250);
+#elif GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_MPU9250
+  return firstAvailableWristSensor(SENSOR_WRIST_MPU9250, SENSOR_WRIST_GY25, SENSOR_WRIST_GY511);
 #else
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST)) return SENSOR_WRIST;
-  return SENSOR_WRIST_AUX;
+  return firstAvailableWristSensor(SENSOR_WRIST_GY25, SENSOR_WRIST_MPU9250, SENSOR_WRIST_GY511);
 #endif
+}
+
+static uint8_t selectedWristAccelPhysicalSensor() {
+  const uint8_t wristSensor = selectedWristQuaternionPhysicalSensor();
+  if (isSensorEnabled(wristSensor) && g_sensorInitOk[wristSensor]) return wristSensor;
+  if (isSensorEnabled(SENSOR_WRIST_GY25) && g_sensorInitOk[SENSOR_WRIST_GY25]) return SENSOR_WRIST_GY25;
+  if (isSensorEnabled(SENSOR_WRIST_MPU9250) && g_sensorInitOk[SENSOR_WRIST_MPU9250]) return SENSOR_WRIST_MPU9250;
+  if (isSensorEnabled(SENSOR_WRIST_GY511) && g_sensorInitOk[SENSOR_WRIST_GY511]) return SENSOR_WRIST_GY511;
+  return wristSensor;
 }
 
 static bool selectedWristQuaternionAvailable() {
@@ -2144,16 +2178,22 @@ static void feedRecognizerFromCurrentPose() {
     g_recognizer.processSample(gag::Sensor::WRIST, correctedLogicalWristQuaternion(), now);
   }
 
-  // Wrist accel can be used later for acceleration-driven gestures.
+  // Wrist accel follows the selected/default wrist sensor when available.
   gag::AccelData a;
-  if (isSensorEnabled(SENSOR_WRIST) && g_sensorInitOk[SENSOR_WRIST]) {
-    pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
+  const uint8_t wristAccelSensor = selectedWristAccelPhysicalSensor();
+  if (wristAccelSensor == SENSOR_WRIST_GY511) {
+    Vec3 accelG;
+    if (readGY511Accel(accelG)) {
+      a = gag::AccelData(accelG.x, accelG.y, accelG.z);
+    }
+  } else if (isSensorEnabled(wristAccelSensor) && g_sensorInitOk[wristAccelSensor]) {
+    pcaSelect(ACTIVE_CHANNELS[wristAccelSensor]);
     uint8_t buf[6] = { 0 };
-    i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 6);
+    i2cReadBytes((wristAccelSensor == SENSOR_WRIST_MPU9250) ? wristMpuAddress() : MPU6050_ADDR, REG_ACCEL_XOUT_H, buf, 6);
     int16_t ax = (int16_t)((buf[0] << 8) | buf[1]);
     int16_t ay = (int16_t)((buf[2] << 8) | buf[3]);
     int16_t az = (int16_t)((buf[4] << 8) | buf[5]);
-    const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
+    const gag::offsets::HwOffset6 hw = g_offsets.hardware(wristAccelSensor);
     a = gag::AccelData((float)(ax - hw.ax) / 16384.0f,
                        (float)(ay - hw.ay) / 16384.0f,
                        (float)(az - hw.az) / 16384.0f);
