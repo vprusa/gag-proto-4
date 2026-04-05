@@ -1289,12 +1289,13 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
 
   if (sensorIdx == SENSOR_WRIST_GY25) {
     // Wrist GY25 has its own mounting orientation.
-    // Serial.println("SENSOR_WRIST_GY25");
-    ax = (int16_t)axIn;
-    ay = (int16_t)ayIn;
+    Serial.println("SENSOR_WRIST_GY25");
+    Serial.println(sensorIdx);
+    ax = (int16_t)-ayIn;
+    ay = (int16_t)axIn;
     az = (int16_t)azIn;
-    gx = (int16_t)gxIn;
-    gy = (int16_t)gyIn;
+    gx = (int16_t)-gyIn;
+    gy = (int16_t)gxIn;
     gz = (int16_t)gzIn;
     return;
   }
