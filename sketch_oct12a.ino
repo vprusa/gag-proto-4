@@ -77,7 +77,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX
-#define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 0
+#define GAG_AUTO_CAPTURE_MINOR_ROTATION_FIX 1
 #endif
 
 #ifndef GAG_APPLY_MINOR_ROTATION_OFFSET
@@ -85,7 +85,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_MEASURE_HW_OFFSETS_AT_BOOT
-#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
+#define GAG_MEASURE_HW_OFFSETS_AT_BOOT 1
 #endif
 
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
@@ -122,7 +122,11 @@ struct Vec3;
 #endif
 
 #ifndef GAG_VIZ_CUBES_RELATIVE_ROTATION
-#define GAG_VIZ_CUBES_RELATIVE_ROTATION 0
+#define GAG_VIZ_CUBES_RELATIVE_ROTATION 1
+#endif
+
+#ifndef GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX
+#define GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX 1
 #endif
 
 #ifndef GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS
@@ -210,7 +214,7 @@ struct Vec3;
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
 #define GAG_PRIMARY_WRIST_SENSOR_GY511 1
 #ifndef GAG_PRIMARY_WRIST_SENSOR
-#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY511
+#define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 // #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
@@ -1288,6 +1292,16 @@ static void remapFingerRawAxesToGloveFrame(uint8_t sensorIdx,
     return;
   }
 
+  if (sensorIdx == SENSOR_WRIST) {
+    // Index IMU is mounted differently from the other finger modules.
+    ax = (int16_t)azIn;
+    ay = (int16_t)-ayIn;
+    az = (int16_t)axIn;
+    gx = (int16_t)gzIn;
+    gy = (int16_t)-gyIn;
+    gz = (int16_t)gxIn;
+    return;
+  }
   // if (sensorIdx == SENSOR_WRIST_AUX) {
   //   // Index IMU is mounted differently from the other finger modules.
   //   ax = (int16_t)axIn;
@@ -1354,6 +1368,28 @@ static gag::Quaternion physicalFixedQuaternionForPhysicalSensor(uint8_t sensorId
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   return g_offsets.applySoftwareOffset(sensorIdx, physicalFixedQuaternionForPhysicalSensor(sensorIdx));
+}
+
+static gag::Quaternion applyWristPivotRotationCorrection(uint8_t sensorIdx, const gag::Quaternion& qIn) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+#if GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX
+  if (sensorIdx == SENSOR_WRIST_AUX) {
+    // Keep the GY-511 cube mapping fix, but rotate the wrist pivot back into
+    // the finger-relative frame used by the hand skeleton and relative cubes.
+    // const gag::Quaternion pivotFixY = gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f);
+    // const gag::Quaternion pivotFixZ = gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f);
+    // const gag::Quaternion pivotFix = gag::Quaternion::mul(pivotFixY, pivotFixZ);
+    const gag::Quaternion pivotFix  = gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, 180.0f);
+    const gag::Quaternion pivotFix2 = gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 180.0f);
+    const gag::Quaternion pivotFix3 = gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 0.0f);
+    gag::Quaternion out = gag::Quaternion::mul(gag::Quaternion::mul(gag::Quaternion::mul(q, pivotFix), pivotFix2), pivotFix3);
+    // gag::Quaternion out = gag::Quaternion::mul(gag::Quaternion::mul(q, pivotFix), pivotFix2);
+    out.normalizeInPlace();
+    return out;
+  }
+#endif
+  return q;
 }
 
 // Select the single wrist sensor used by the hand skeleton and recognizer.
@@ -2171,9 +2207,11 @@ static gag::viz::FrameInput buildVizFrame() {
                                     : correctedQuaternionForPhysicalSensor(s);
   }
 
-  frame.hand_wrist_q = GAG_VIZ_HAND_RELATIVE_ROTATION
-                         ? physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor())
-                         : correctedLogicalWristQuaternion();
+  const uint8_t wristSensor = selectedWristQuaternionPhysicalSensor();
+  const gag::Quaternion wristBaseQ = (GAG_VIZ_HAND_RELATIVE_ROTATION || GAG_VIZ_CUBES_RELATIVE_ROTATION)
+                                       ? physicalFixedQuaternionForPhysicalSensor(wristSensor)
+                                       : correctedLogicalWristQuaternion();
+  frame.hand_wrist_q = applyWristPivotRotationCorrection(wristSensor, wristBaseQ);
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
 
