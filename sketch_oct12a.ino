@@ -1917,13 +1917,14 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_GREEN;
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_LEFT;
-    a.vibrate = true;
+    // a.vibrate = true;
+    a.vibrate = false;
     a.vibrate_sensor_mask = (1u << SENSOR_INDEX);
-    // a.vibrate_duration_ms = 140;
-    a.vibrate_duration_ms = 30;
+    a.vibrate_duration_ms = 140;
+    // a.vibrate_duration_ms = 30;
     addPoseGesture("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(0,1,0,-30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1,0,0,30.0f),
                    18.0f, 320, 900, a);
   }
 
@@ -1947,7 +1948,7 @@ static void installDefaultGestures() {
     a.mouse.type = MouseActionType::MOVE; a.mouse.dx = +12; a.mouse.dy = 0;
     addPoseGesture("thumb_move_right", "MOUSE_MOVE_RIGHT", "MR",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0,0,1,-22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-22.0f),
                    16.0f, 180, 900, a);
   }
   {
@@ -1955,7 +1956,7 @@ static void installDefaultGestures() {
     a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = -12; a.mouse.dy = 0;
     addPoseGesture("thumb_move_left", "MOUSE_MOVE_LEFT", "ML",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0,0,1,+22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1,0,0,+22.0f),
                    16.0f, 180, 900, a);
   }
   {
@@ -1963,7 +1964,7 @@ static void installDefaultGestures() {
     a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = 0; a.mouse.dy = -12;
     addPoseGesture("thumb_move_up", "MOUSE_MOVE_UP", "MU",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0,0,1, -22.0f),
                    16.0f, 180, 900, a);
   }
   {
@@ -1971,7 +1972,7 @@ static void installDefaultGestures() {
     a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = 0; a.mouse.dy = +12;
     addPoseGesture("thumb_move_down", "MOUSE_MOVE_DOWN", "MD",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,+22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0,0,1,22.0f),
                    16.0f, 180, 900, a);
   }
 }
