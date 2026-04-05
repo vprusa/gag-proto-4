@@ -1226,14 +1226,14 @@ static void remapFingerRawAxesToGloveFrame(uint8_t sensorIdx,
     return;
   }
 
-   if (sensorIdx == SENSOR_MIDDLE) {
+   if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
     // Index IMU is mounted differently from the other finger modules.
     ax = axIn;
-    ay = azIn;
-    az = (int16_t)-ayIn;
+    ay = (int16_t)-azIn;
+    az = (int16_t)ayIn;
     gx = gxIn;
-    gy = gzIn;
-    gz = (int16_t)-gyIn;
+    gy = (int16_t)-gzIn;
+    gz = (int16_t)gyIn;
     return;
   }
 
@@ -1919,10 +1919,11 @@ static void installDefaultGestures() {
     a.mouse.button = MOUSE_LEFT;
     a.vibrate = true;
     a.vibrate_sensor_mask = (1u << SENSOR_INDEX);
-    a.vibrate_duration_ms = 140;
+    // a.vibrate_duration_ms = 140;
+    a.vibrate_duration_ms = 30;
     addPoseGesture("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0,1,0,-30.0f),
                    18.0f, 320, 900, a);
   }
 
