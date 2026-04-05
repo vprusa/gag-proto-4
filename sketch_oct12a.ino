@@ -328,29 +328,46 @@ static inline float deg2rad(float d){ return d * (float)M_PI / 180.0f; }
 static inline float rad2deg(float r){ return r * 180.0f / (float)M_PI; }
 static inline float wrap180(float a){ while(a > 180.0f) a -= 360.0f; while(a < -180.0f) a += 360.0f; return a; }
 static inline float deltaAngleDeg(float a, float b){ return wrap180(a - b); }
+static inline float clamp01(float v){ if (v < 0.0f) return 0.0f; if (v > 1.0f) return 1.0f; return v; }
+static inline float vecDot(const Vec3& a, const Vec3& b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline Vec3 vecCross(const Vec3& a, const Vec3& b) {
+  Vec3 out{
+    a.y*b.z - a.z*b.y,
+    a.z*b.x - a.x*b.z,
+    a.x*b.y - a.y*b.x
+  };
+  return out;
+}
+static inline float vecNorm(const Vec3& v){ return sqrtf(vecDot(v, v)); }
+static inline Vec3 vecScale(const Vec3& v, float s){ Vec3 out{v.x*s, v.y*s, v.z*s}; return out; }
+static inline Vec3 vecSub(const Vec3& a, const Vec3& b){ Vec3 out{a.x-b.x, a.y-b.y, a.z-b.z}; return out; }
+static inline Vec3 vecNormalize(const Vec3& v) {
+  const float n = vecNorm(v);
+  if (n <= 1e-6f) return Vec3{0.0f, 0.0f, 0.0f};
+  return vecScale(v, 1.0f / n);
+}
 
 // =====================
 // IMU state
 // =====================
 MPU6050 mpu[SENSOR_COUNT_ALL];
-float roll_[SENSOR_COUNT_ALL]  = {0};
-float pitch_[SENSOR_COUNT_ALL] = {0};
-float yaw_[SENSOR_COUNT_ALL]   = {0};
+gag::Quaternion g_sensorFusionQuat[SENSOR_COUNT_ALL];
+bool g_sensorFusionInitialized[SENSOR_COUNT_ALL] = {false};
 unsigned long lastT[SENSOR_COUNT_ALL] = {0};
 unsigned long g_lastFifoResetMs[SENSOR_COUNT_ALL] = {0};
 const float alpha = 0.98f;
+const float kTiltCorrectionGain = 1.0f - alpha;
+const float kHeadingCorrectionGain = 0.08f;
+const Vec3 kWorldUp{0.0f, 0.0f, 1.0f};
+const Vec3 kWorldNorth{1.0f, 0.0f, 0.0f};
 
 bool wristMagOk = false;
-float yawMagWristDeg = 0.0f;
 Vec3 wristMagRaw{0,0,0};
 
 bool gy511Ok = true;
 bool gy511MagOk = true;
 Vec3 gy511Accel_g{0,0,0};
 Vec3 gy511MagRaw{0,0,0};
-float gy511RollDeg = 0.0f;
-float gy511PitchDeg = 0.0f;
-float gy511YawMagDeg = 0.0f;
 unsigned long gy511LastT = 0;
 
 // =====================
@@ -1034,10 +1051,6 @@ static inline gag::Sensor mapToRecognizerSensor(uint8_t sensorIdx) {
   }
 }
 
-static gag::Quaternion eulerSensorToQuat(float rollDeg, float pitchDeg, float yawDeg) {
-  return gag::Quaternion::fromEulerZyxDeg(yawDeg, pitchDeg, rollDeg);
-}
-
 static inline bool isFingerSensor(uint8_t sensorIdx) {
   return sensorIdx <= SENSOR_LITTLE;
 }
@@ -1059,6 +1072,120 @@ static inline uint8_t sensorToVizSlot(uint8_t sensorIdx) {
   }
 }
 
+static gag::Quaternion quatFromAxisAngleRad(float ax, float ay, float az, float rad) {
+  const float axisNorm = sqrtf(ax*ax + ay*ay + az*az);
+  if (axisNorm <= 1e-6f || fabsf(rad) <= 1e-6f) return gag::Quaternion();
+  const float half = 0.5f * rad;
+  const float s = sinf(half) / axisNorm;
+  gag::Quaternion q(cosf(half), ax * s, ay * s, az * s);
+  q.normalizeInPlace();
+  return q;
+}
+
+static Vec3 rotateVectorByQuat(const gag::Quaternion& qIn, const Vec3& v) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  const float tx = 2.0f * (q.y * v.z - q.z * v.y);
+  const float ty = 2.0f * (q.z * v.x - q.x * v.z);
+  const float tz = 2.0f * (q.x * v.y - q.y * v.x);
+  Vec3 out{
+    v.x + q.w * tx + (q.y * tz - q.z * ty),
+    v.y + q.w * ty + (q.z * tx - q.x * tz),
+    v.z + q.w * tz + (q.x * ty - q.y * tx)
+  };
+  return out;
+}
+
+static Vec3 rotateVectorByQuatInverse(const gag::Quaternion& qIn, const Vec3& v) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  return rotateVectorByQuat(q.inverseUnit(), v);
+}
+
+static gag::Quaternion quatNlerp(const gag::Quaternion& aIn, const gag::Quaternion& bIn, float t) {
+  const float tt = clamp01(t);
+  gag::Quaternion a = aIn;
+  gag::Quaternion b = bIn;
+  a.normalizeInPlace();
+  b.normalizeInPlace();
+  if (gag::Quaternion::dot(a, b) < 0.0f) {
+    b.w = -b.w; b.x = -b.x; b.y = -b.y; b.z = -b.z;
+  }
+  gag::Quaternion out(
+    a.w + (b.w - a.w) * tt,
+    a.x + (b.x - a.x) * tt,
+    a.y + (b.y - a.y) * tt,
+    a.z + (b.z - a.z) * tt
+  );
+  out.normalizeInPlace();
+  return out;
+}
+
+static gag::Quaternion quatFromTwoUnitVectors(const Vec3& fromIn, const Vec3& toIn) {
+  const Vec3 from = vecNormalize(fromIn);
+  const Vec3 to = vecNormalize(toIn);
+  const float dRaw = vecDot(from, to);
+  const float d = dRaw < -1.0f ? -1.0f : (dRaw > 1.0f ? 1.0f : dRaw);
+  if (d >= 0.999999f) return gag::Quaternion();
+  if (d <= -0.999999f) {
+    const Vec3 helper = (fabsf(from.z) < 0.9f) ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{1.0f, 0.0f, 0.0f};
+    const Vec3 axis = vecNormalize(vecCross(from, helper));
+    return quatFromAxisAngleRad(axis.x, axis.y, axis.z, (float)M_PI);
+  }
+  const Vec3 axis = vecNormalize(vecCross(from, to));
+  return quatFromAxisAngleRad(axis.x, axis.y, axis.z, acosf(d));
+}
+
+static gag::Quaternion integrateGyroQuaternion(const gag::Quaternion& currentIn,
+                                               float gxDegPerSec,
+                                               float gyDegPerSec,
+                                               float gzDegPerSec,
+                                               float dtSec) {
+  gag::Quaternion current = currentIn;
+  current.normalizeInPlace();
+  const float omegaDegPerSec = sqrtf(gxDegPerSec*gxDegPerSec + gyDegPerSec*gyDegPerSec + gzDegPerSec*gzDegPerSec);
+  if (omegaDegPerSec <= 1e-6f || dtSec <= 0.0f) return current;
+  const gag::Quaternion delta = quatFromAxisAngleRad(gxDegPerSec, gyDegPerSec, gzDegPerSec, deg2rad(omegaDegPerSec * dtSec));
+  gag::Quaternion out = gag::Quaternion::mul(current, delta);
+  out.normalizeInPlace();
+  return out;
+}
+
+static gag::Quaternion applyTiltCorrection(const gag::Quaternion& currentIn, const Vec3& accelBody, float gain) {
+  const Vec3 upBody = vecNormalize(accelBody);
+  if (vecNorm(upBody) <= 1e-6f) return currentIn;
+  gag::Quaternion current = currentIn;
+  current.normalizeInPlace();
+  const Vec3 predictedUpWorld = vecNormalize(rotateVectorByQuat(current, upBody));
+  const gag::Quaternion correction = quatFromTwoUnitVectors(predictedUpWorld, kWorldUp);
+  const gag::Quaternion partial = quatNlerp(gag::Quaternion(), correction, gain);
+  gag::Quaternion out = gag::Quaternion::mul(partial, current);
+  out.normalizeInPlace();
+  return out;
+}
+
+static gag::Quaternion applyHeadingCorrection(const gag::Quaternion& currentIn, const Vec3& magBody, float gain) {
+  const gag::Quaternion current = currentIn.normalized();
+  const Vec3 upBody = vecNormalize(rotateVectorByQuatInverse(current, kWorldUp));
+  if (vecNorm(upBody) <= 1e-6f) return current;
+
+  Vec3 northBody = vecSub(magBody, vecScale(upBody, vecDot(magBody, upBody)));
+  northBody = vecNormalize(northBody);
+  if (vecNorm(northBody) <= 1e-6f) return current;
+
+  Vec3 predictedNorthWorld = rotateVectorByQuat(current, northBody);
+  predictedNorthWorld.z = 0.0f;
+  predictedNorthWorld = vecNormalize(predictedNorthWorld);
+  if (vecNorm(predictedNorthWorld) <= 1e-6f) return current;
+
+  const float crossZ = predictedNorthWorld.x * kWorldNorth.y - predictedNorthWorld.y * kWorldNorth.x;
+  const float dotv = predictedNorthWorld.x * kWorldNorth.x + predictedNorthWorld.y * kWorldNorth.y;
+  const gag::Quaternion correction = quatFromAxisAngleRad(0.0f, 0.0f, 1.0f, atan2f(crossZ, dotv) * clamp01(gain));
+  gag::Quaternion out = gag::Quaternion::mul(correction, current);
+  out.normalizeInPlace();
+  return out;
+}
+
 static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az,
                                            int16_t& gx, int16_t& gy, int16_t& gz) {
   const int16_t axIn = ax;
@@ -1067,7 +1194,7 @@ static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az
   const int16_t gyIn = gy;
 
   // Sensor frame is rotated +90 deg around Z relative to the glove frame.
-  // Convert raw samples into glove-frame axes before the complementary filter.
+  // Convert raw samples into glove-frame axes before quaternion fusion.
   ax = ayIn;
   ay = (int16_t)-axIn;
   gx = gyIn;
@@ -1076,25 +1203,11 @@ static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az
   (void)gz;
 }
 
-static gag::Quaternion fingerEulerToQuat(uint8_t sensorIdx, float rollDeg, float pitchDeg, float yawDeg) {
-  // After raw-axis remapping, the finger IMU modules still share a cyclic
-  // physical-frame mismatch relative to the glove visualization frame:
-  // sensor X -> glove Z, sensor Y -> glove X, sensor Z -> glove Y.
-  // Apply the same reorder for all finger sensors, while the index keeps its
-  // opposite local Z sign on yaw.
-  const float gloveYawDeg = (sensorIdx == SENSOR_INDEX) ? -yawDeg : yawDeg;
-  return eulerSensorToQuat(pitchDeg, gloveYawDeg, rollDeg);
-}
-
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
-  if (sensorIdx == SENSOR_WRIST_AUX) {
-    return eulerSensorToQuat(gy511RollDeg, gy511PitchDeg, gy511YawMagDeg);
-  }
-  if (sensorIdx == SENSOR_WRIST) {
-    const float yawDeg = wristMagOk ? yawMagWristDeg : yaw_[SENSOR_WRIST];
-    return eulerSensorToQuat(roll_[SENSOR_WRIST], pitch_[SENSOR_WRIST], yawDeg);
-  }
-  return fingerEulerToQuat(sensorIdx, roll_[sensorIdx], pitch_[sensorIdx], yaw_[sensorIdx]);
+  if (sensorIdx >= SENSOR_COUNT_ALL) return gag::Quaternion();
+  gag::Quaternion q = g_sensorFusionQuat[sensorIdx];
+  q.normalizeInPlace();
+  return q;
 }
 
 static gag::Quaternion applyDefaultSensorRotation(uint8_t sensorIdx, const gag::Quaternion& rawIn) {
@@ -1125,10 +1238,7 @@ static bool isSensorEnabled(uint8_t sensorIdx) {
 
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
   if (!isSensorEnabled(sensorIdx)) return false;
-  if (sensorIdx == SENSOR_WRIST_AUX) {
-    return gy511Ok;
-  }
-  return isMpuBackedSensor(sensorIdx);
+  return g_sensorFusionInitialized[sensorIdx];
 }
 
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
@@ -1141,7 +1251,7 @@ static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
 // Both wrist sensors can still be updated and drawn as separate cubes.
 static uint8_t selectedWristQuaternionPhysicalSensor() {
 #if GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_GY511
-  return gy511Ok ? SENSOR_WRIST_AUX : SENSOR_WRIST;
+  return physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX) ? SENSOR_WRIST_AUX : SENSOR_WRIST;
 #else
   return SENSOR_WRIST;
 #endif
@@ -1254,18 +1364,24 @@ static void updateGY511(){
   if (!readGY511Accel(a)) return;
   remapGy511VectorToGloveFrame(a);
   gy511Accel_g = a;
-  gy511RollDeg  = rad2deg(atan2f(a.y, a.z));
-  gy511PitchDeg = rad2deg(atan2f(-a.x, sqrtf(a.y*a.y + a.z*a.z)));
+
+  gag::Quaternion q = g_sensorFusionQuat[SENSOR_WRIST_AUX];
+  if (!g_sensorFusionInitialized[SENSOR_WRIST_AUX]) {
+    q = gag::Quaternion();
+  }
+  q = applyTiltCorrection(q, a, 1.0f);
 
   if (gy511MagOk) {
     Vec3 m;
     if (readGY511Mag(m)) {
       remapGy511VectorToGloveFrame(m);
       gy511MagRaw = m;
-      gy511YawMagDeg = yawFromMagTiltComp(m, gy511RollDeg, gy511PitchDeg);
+      q = applyHeadingCorrection(q, m, 1.0f);
     }
   }
 
+  g_sensorFusionQuat[SENSOR_WRIST_AUX] = q;
+  g_sensorFusionInitialized[SENSOR_WRIST_AUX] = true;
   gy511LastT = millis();
 }
 
@@ -1302,10 +1418,11 @@ static bool readWristMag(Vec3 &magOut){
 
 static void updateWristMagYaw(){
   if (!wristMagOk) return;
+  if (!g_sensorFusionInitialized[SENSOR_WRIST]) return;
   Vec3 m;
   if (readWristMag(m)) {
     wristMagRaw = m;
-    yawMagWristDeg = yawFromMagTiltComp(m, roll_[SENSOR_WRIST], pitch_[SENSOR_WRIST]);
+    g_sensorFusionQuat[SENSOR_WRIST] = applyHeadingCorrection(g_sensorFusionQuat[SENSOR_WRIST], m, kHeadingCorrectionGain);
   }
 }
 
@@ -1388,28 +1505,31 @@ static void updateOneIMU(uint8_t idx){
     remapFingerRawAxesToGloveFrame(ax, ay, az, gx, gy, gz);
   }
 
-  unsigned long now = millis();
+  const unsigned long now = millis();
   float dt = (now - lastT[idx]) / 1000.0f;
   if (dt <= 0.0f) dt = 0.001f;
+  if (dt > 0.1f) dt = 0.1f;
   lastT[idx] = now;
 
-  float axg = ax / 16384.0f;
-  float ayg = ay / 16384.0f;
-  float azg = az / 16384.0f;
-  float gxds = gx / 131.0f;
-  float gyds = gy / 131.0f;
-  float gzds = gz / 131.0f;
+  const Vec3 accelBody{
+    ax / 16384.0f,
+    ay / 16384.0f,
+    az / 16384.0f
+  };
+  const float gxDegPerSec = gx / 131.0f;
+  const float gyDegPerSec = gy / 131.0f;
+  const float gzDegPerSec = gz / 131.0f;
 
-  float rollGyro  = roll_[idx]  + gxds * dt;
-  float pitchGyro = pitch_[idx] + gyds * dt;
-  float yawGyro   = yaw_[idx]   + gzds * dt;
+  gag::Quaternion q = g_sensorFusionQuat[idx];
+  if (!g_sensorFusionInitialized[idx]) {
+    q = applyTiltCorrection(gag::Quaternion(), accelBody, 1.0f);
+    g_sensorFusionInitialized[idx] = true;
+  } else {
+    q = integrateGyroQuaternion(q, gxDegPerSec, gyDegPerSec, gzDegPerSec, dt);
+    q = applyTiltCorrection(q, accelBody, kTiltCorrectionGain);
+  }
 
-  float rollAcc  = rad2deg(atan2f(ayg, azg));
-  float pitchAcc = rad2deg(atan2f(-axg, sqrtf(ayg*ayg + azg*azg)));
-
-  roll_[idx]  = alpha * rollGyro  + (1.0f - alpha) * rollAcc;
-  pitch_[idx] = alpha * pitchGyro + (1.0f - alpha) * pitchAcc;
-  yaw_[idx]   = wrap180(yawGyro);
+  g_sensorFusionQuat[idx] = q;
 }
 
 // =====================
