@@ -1190,17 +1190,33 @@ static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az
                                            int16_t& gx, int16_t& gy, int16_t& gz) {
   const int16_t axIn = ax;
   const int16_t ayIn = ay;
+  const int16_t azIn = az;
   const int16_t gxIn = gx;
   const int16_t gyIn = gy;
+  const int16_t gzIn = gz;
 
-  // Sensor frame is rotated +90 deg around Z relative to the glove frame.
-  // Convert raw samples into glove-frame axes before quaternion fusion.
-  ax = ayIn;
-  ay = (int16_t)-axIn;
-  gx = gyIn;
-  gy = (int16_t)-gxIn;
-  (void)az;
-  (void)gz;
+  // Finger IMUs use a cyclic axis permutation relative to the glove frame:
+  // sensor X -> glove Z, sensor Y -> glove X, sensor Z -> glove Y.
+  // Remap the raw accel/gyro vectors into glove-frame axes before fusion so
+  // the quaternion state rotates around the expected glove axes.
+  // ax = ayIn;
+  // ay = azIn;
+  // az = axIn;
+  // gx = gyIn;
+  // gy = gzIn;
+  // gz = gxIn;
+  ax = axIn;
+  ay = azIn;
+  az = -ayIn;
+  gx = gxIn;
+  gy = gzIn;
+  gz = -gyIn;
+  // ax = azIn;
+  // ay = ayIn;
+  // az = axIn;
+  // gx = gzIn;
+  // gy = gyIn;
+  // gz = gxIn;
 }
 
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
