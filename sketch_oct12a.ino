@@ -1256,23 +1256,42 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
 
   if (sensorIdx == SENSOR_INDEX) {
     // Index IMU is mounted differently from the other finger modules.
-    ax = axIn;
-    ay = azIn;
-    az = (int16_t)-ayIn;
-    gx = gxIn;
-    gy = gzIn;
-    gz = (int16_t)-gyIn;
+    // ax = axIn;
+    // ay = azIn;
+    // az = (int16_t)-ayIn;
+    // gx = gxIn;
+    // gy = gzIn;
+    // gz = (int16_t)-gyIn;
+    ax = (int16_t)ayIn;
+    ay = (int16_t)azIn;
+    az = (int16_t)axIn;
+    gx = (int16_t)gyIn;
+    gy = (int16_t)gzIn;
+    gz = (int16_t)gxIn;
     return;
   }
 
-  if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
+  // if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
+  //   // Thumb and middle IMUs share a second mounting orientation.
+  //   ax = axIn;
+  //   ay = (int16_t)-azIn;
+  //   az = (int16_t)ayIn;
+  //   gx = gxIn;
+  //   gy = (int16_t)-gzIn;
+  //   gz = (int16_t)gyIn;
+  //   return;
+  // }
+
+   if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
     // Thumb and middle IMUs share a second mounting orientation.
-    ax = axIn;
-    ay = (int16_t)-azIn;
-    az = (int16_t)ayIn;
-    gx = gxIn;
-    gy = (int16_t)-gzIn;
-    gz = (int16_t)gyIn;
+    Serial.println("SENSOR_WRIST_GY25");
+    Serial.println(sensorIdx);
+    ax = (int16_t)ayIn;
+    ay = (int16_t)-axIn;
+    az = (int16_t)azIn;
+    gx = (int16_t)gyIn;
+    gy = (int16_t)-gxIn;
+    gz = (int16_t)gzIn;
     return;
   }
 
@@ -1289,8 +1308,8 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
 
   if (sensorIdx == SENSOR_WRIST_GY25) {
     // Wrist GY25 has its own mounting orientation.
-    Serial.println("SENSOR_WRIST_GY25");
-    Serial.println(sensorIdx);
+    // Serial.println("SENSOR_WRIST_GY25");
+    // Serial.println(sensorIdx);
     ax = (int16_t)-ayIn;
     ay = (int16_t)axIn;
     az = (int16_t)azIn;
