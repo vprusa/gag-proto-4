@@ -1284,8 +1284,8 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
 
    if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
     // Thumb and middle IMUs share a second mounting orientation.
-    Serial.println("SENSOR_WRIST_GY25");
-    Serial.println(sensorIdx);
+    // Serial.println("SENSOR_WRIST_GY25");
+    // Serial.println(sensorIdx);
     ax = (int16_t)ayIn;
     ay = (int16_t)-axIn;
     az = (int16_t)azIn;
