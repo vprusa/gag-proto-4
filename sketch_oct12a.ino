@@ -145,6 +145,18 @@ struct Vec3;
 #define GAG_TTGO_BUTTON_DEBOUNCE_MS 250UL
 #endif
 
+#ifndef GAG_RESTART_BUTTON_PIN
+#define GAG_RESTART_BUTTON_PIN 0
+#endif
+
+#ifndef GAG_RESTART_BUTTON_ACTIVE_LOW
+#define GAG_RESTART_BUTTON_ACTIVE_LOW 1
+#endif
+
+#ifndef GAG_RESTART_BUTTON_DEBOUNCE_MS
+#define GAG_RESTART_BUTTON_DEBOUNCE_MS 250UL
+#endif
+
 #ifndef GAG_USE_MPU_DMP_QUAT_FIFO
 #define GAG_USE_MPU_DMP_QUAT_FIFO 0
 #endif
@@ -223,6 +235,11 @@ static bool readTtgoLeftButtonPressed() {
 #endif
 }
 
+static bool readRestartButtonPressed() {
+  const int raw = digitalRead(GAG_RESTART_BUTTON_PIN);
+  return GAG_RESTART_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
+}
+
 // =====================
 // Sensor topology
 // =====================
@@ -273,6 +290,8 @@ static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static bool g_leftButtonPrevPressed = false;
 static uint32_t g_leftButtonLastTriggerMs = 0;
+static bool g_restartButtonPrevPressed = false;
+static uint32_t g_restartButtonLastTriggerMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -1186,7 +1205,8 @@ static gag::Quaternion applyHeadingCorrection(const gag::Quaternion& currentIn, 
   return out;
 }
 
-static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az,
+static void remapFingerRawAxesToGloveFrame(uint8_t sensorIdx,
+                                           int16_t& ax, int16_t& ay, int16_t& az,
                                            int16_t& gx, int16_t& gy, int16_t& gz) {
   const int16_t axIn = ax;
   const int16_t ayIn = ay;
@@ -1195,28 +1215,35 @@ static void remapFingerRawAxesToGloveFrame(int16_t& ax, int16_t& ay, int16_t& az
   const int16_t gyIn = gy;
   const int16_t gzIn = gz;
 
-  // Finger IMUs use a cyclic axis permutation relative to the glove frame:
-  // sensor X -> glove Z, sensor Y -> glove X, sensor Z -> glove Y.
-  // Remap the raw accel/gyro vectors into glove-frame axes before fusion so
-  // the quaternion state rotates around the expected glove axes.
-  // ax = ayIn;
-  // ay = azIn;
-  // az = axIn;
-  // gx = gyIn;
-  // gy = gzIn;
-  // gz = gxIn;
-  ax = axIn;
-  ay = azIn;
-  az = -ayIn;
-  gx = gxIn;
-  gy = gzIn;
-  gz = -gyIn;
-  // ax = azIn;
-  // ay = ayIn;
-  // az = axIn;
-  // gx = gzIn;
-  // gy = gyIn;
-  // gz = gxIn;
+  if (sensorIdx == SENSOR_INDEX) {
+    // Index IMU is mounted differently from the other finger modules.
+    ax = axIn;
+    ay = azIn;
+    az = (int16_t)-ayIn;
+    gx = gxIn;
+    gy = gzIn;
+    gz = (int16_t)-gyIn;
+    return;
+  }
+
+   if (sensorIdx == SENSOR_MIDDLE) {
+    // Index IMU is mounted differently from the other finger modules.
+    ax = axIn;
+    ay = azIn;
+    az = (int16_t)-ayIn;
+    gx = gxIn;
+    gy = gzIn;
+    gz = (int16_t)-gyIn;
+    return;
+  }
+
+  // Default mapping for the other finger modules in the current glove build.
+  ax = azIn;
+  ay = ayIn;
+  az = axIn;
+  gx = gzIn;
+  gy = gyIn;
+  gz = gxIn;
 }
 
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
@@ -1518,7 +1545,7 @@ static void updateOneIMU(uint8_t idx){
     ax -= hw.ax; ay -= hw.ay; az -= hw.az;
     gx -= hw.gx; gy -= hw.gy; gz -= hw.gz;
   } else if (isFingerSensor(idx)) {
-    remapFingerRawAxesToGloveFrame(ax, ay, az, gx, gy, gz);
+    remapFingerRawAxesToGloveFrame(idx, ax, ay, az, gx, gy, gz);
   }
 
   const unsigned long now = millis();
@@ -2032,32 +2059,38 @@ static gag::viz::FrameInput buildVizFrame() {
 
   return frame;
 }
+static void resetFusionState() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
+    g_sensorFusionQuat[i] = gag::Quaternion();
+    g_sensorFusionInitialized[i] = false;
+    lastT[i] = now;
+    g_lastFifoResetMs[i] = 0;
+  }
+  wristMagOk = false;
+  wristMagRaw = Vec3{0,0,0};
+  gy511Ok = true;
+  gy511MagOk = true;
+  gy511Accel_g = Vec3{0,0,0};
+  gy511MagRaw = Vec3{0,0,0};
+  gy511LastT = 0;
+  g_lastSerialQuatLogMs = 0;
+  g_lastMinorRotationOffsetPrintMs = 0;
+}
 
-// =====================
-// Setup / loop
-// =====================
-void setup() {
-  Serial.begin(115200);
-  delay(100);
-#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
-  pinMode(GAG_TTGO_LEFT_BUTTON_PIN, INPUT);
-  g_leftButtonPrevPressed = readTtgoLeftButtonPressed();
-#endif
+static void initializeGloveRuntime(bool coldBootLog) {
+  resetFusionState();
 
-  tft.init();
-  tft.setRotation(GAG_TFT_ROTATION); // TFT_eSPI rotates the whole UI, including text primitives.
   tft.fillScreen(TFT_BLACK);
   g_viz.begin(tft, TFT_BLACK);
-  g_viz.pushLog("BOOT");
+  g_viz.pushLog(coldBootLog ? "BOOT" : "RESTART");
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
   pcaReset();
 
-  // Load default offsets.
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     g_offsets.setHardware(i, DEFAULT_HW_OFFSETS[i]);
     g_offsets.setSoftwareQuaternion(i, gag::Quaternion());
-    // g_minorRotationOffset[i] = gag::Quaternion();
   }
 
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
@@ -2080,11 +2113,10 @@ void setup() {
     printMpuFifoBootTestForSensor(s);
   }
 #endif
-  #if GAG_ENABLE_FIFO_REPORT
+#if GAG_ENABLE_FIFO_REPORT
   printFifoCapabilityReport();
-  #endif
+#endif
 
-  // Let filters settle.
   for (uint8_t warm = 0; warm < 20; ++warm) {
     for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) updateOneIMU(i);
     updateWristMagYaw();
@@ -2094,7 +2126,6 @@ void setup() {
 
   measureHardwareOffsetsAtBoot();
 
-  // Let the sensor fusion settle again after applying the calibrated offsets.
   for (uint8_t warm = 0; warm < 20; ++warm) {
     for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) updateOneIMU(i);
     updateWristMagYaw();
@@ -2106,12 +2137,6 @@ void setup() {
   printRotationOffsetsAtBoot();
   autoCaptureSoftwareNeutralOffsets();
 
-#if GAG_ENABLE_BLE_MOUSE
-  g_bleMouse.begin();
-#endif
-  initMotors();
-  // runStartupVibrationTest();
-
   g_recognizer.begin(Serial);
   g_recognizer.setOnRecognized(onGestureRecognized);
   installDefaultGestures();
@@ -2119,7 +2144,47 @@ void setup() {
   g_viz.pushLog("READY");
 }
 
+static void maybeHandleRestartButton() {
+  const bool pressed = readRestartButtonPressed();
+  const uint32_t now = millis();
+  const bool risingEdge = pressed && !g_restartButtonPrevPressed;
+  g_restartButtonPrevPressed = pressed;
+  if (!risingEdge) return;
+  if ((uint32_t)(now - g_restartButtonLastTriggerMs) < (uint32_t)GAG_RESTART_BUTTON_DEBOUNCE_MS) return;
+  g_restartButtonLastTriggerMs = now;
+
+  Serial.println("GPIO0 restart requested.");
+  initializeGloveRuntime(false);
+}
+
+
+// =====================
+// Setup / loop
+// =====================
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
+  pinMode(GAG_TTGO_LEFT_BUTTON_PIN, INPUT);
+  g_leftButtonPrevPressed = readTtgoLeftButtonPressed();
+#endif
+  pinMode(GAG_RESTART_BUTTON_PIN, INPUT_PULLUP);
+  g_restartButtonPrevPressed = readRestartButtonPressed();
+
+  tft.init();
+  tft.setRotation(GAG_TFT_ROTATION); // TFT_eSPI rotates the whole UI, including text primitives.
+  initializeGloveRuntime(true);
+
+#if GAG_ENABLE_BLE_MOUSE
+  g_bleMouse.begin();
+#endif
+  initMotors();
+  // runStartupVibrationTest();
+}
+
 void loop() {
+  maybeHandleRestartButton();
+
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     updateOneIMU(i);
   }
