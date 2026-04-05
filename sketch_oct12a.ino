@@ -58,10 +58,10 @@ struct Vec3;
 #endif
 
 #if __has_include(<BleMouse.h>)
-  #include <BleMouse.h>
-  #define GAG_HAVE_BLE_MOUSE 1
+#include <BleMouse.h>
+#define GAG_HAVE_BLE_MOUSE 1
 #else
-  #define GAG_HAVE_BLE_MOUSE 0
+#define GAG_HAVE_BLE_MOUSE 0
 #endif
 
 #ifndef GAG_ENABLE_BLE_MOUSE
@@ -115,6 +115,14 @@ struct Vec3;
 
 #ifndef GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
 #define GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG 0
+#endif
+
+#ifndef GAG_VIZ_HAND_RELATIVE_ROTATION
+#define GAG_VIZ_HAND_RELATIVE_ROTATION 1
+#endif
+
+#ifndef GAG_VIZ_CUBES_RELATIVE_ROTATION
+#define GAG_VIZ_CUBES_RELATIVE_ROTATION 0
 #endif
 
 #ifndef GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS
@@ -182,7 +190,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_MPU_FIFO_SMPLRT_DIV
-#define GAG_MPU_FIFO_SMPLRT_DIV 9u   // 1 kHz / (1 + 9) = 100 Hz FIFO sample rate.
+#define GAG_MPU_FIFO_SMPLRT_DIV 9u  // 1 kHz / (1 + 9) = 100 Hz FIFO sample rate.
 #endif
 
 #ifndef GAG_ENABLE_FIFO_BOOT_TEST
@@ -200,27 +208,27 @@ struct Vec3;
 #endif
 
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
-#define GAG_PRIMARY_WRIST_SENSOR_GY511   1
+#define GAG_PRIMARY_WRIST_SENSOR_GY511 1
 #ifndef GAG_PRIMARY_WRIST_SENSOR
 #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_GY511
 // #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
-#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) &&     (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
+#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
 #error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_MPU9250 or GAG_PRIMARY_WRIST_SENSOR_GY511"
 #endif
 
 // =====================
 // Pins & PCA9548A / TCA9548A
 // =====================
-#define PIN_I2C_SDA   22
-#define PIN_I2C_SCL   21
-#define PIN_PCA_RST   33
-#define PIN_PCA_A0    25
-#define PIN_PCA_A1    26
-#define PIN_PCA_A2    27
-#define DRIVE_PCA_ADDR_PINS  false
-#define PCA9548A_BASE_ADDR   0x70
+#define PIN_I2C_SDA 22
+#define PIN_I2C_SCL 21
+#define PIN_PCA_RST 33
+#define PIN_PCA_A0 25
+#define PIN_PCA_A1 26
+#define PIN_PCA_A2 27
+#define DRIVE_PCA_ADDR_PINS false
+#define PCA9548A_BASE_ADDR 0x70
 #define MPU9250_ADDR_DEFAULT 0x68
 
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
@@ -261,22 +269,22 @@ static const uint8_t CH_GY511 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
 // thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250.
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511, CH_MPU9250};
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 5, CH_GY511, CH_MPU9250 };
 // static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
 
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
-  true,  // thumb
-  true,  // index
-  true,  // middle
-  false, // ring
-  false, // little
-  true,  // wrist aux GY-511
-  true,  // wrist MPU9250
+  true,   // thumb
+  true,   // index
+  true,   // middle
+  false,  // ring
+  false,  // little
+  true,   // wrist aux GY-511
+  true,   // wrist MPU9250
   // false,  // wrist MPU9250
 };
 
-static const uint8_t FINGER_MAP[5] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE};
+static const uint8_t FINGER_MAP[5] = { SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE };
 
 static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
   return (sensorIdx < 8u) ? (uint8_t)(1u << sensorIdx) : 0u;
@@ -299,9 +307,12 @@ static uint32_t g_restartButtonLastTriggerMs = 0;
 #if GAG_ENABLE_VIBRATION
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {15, 2, 17, 13, 25, 26, 27};
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27 };
 static const bool MOTOR_ACTIVE_HIGH = true;
-struct MotorState { bool active = false; uint32_t until_ms = 0; };
+struct MotorState {
+  bool active = false;
+  uint32_t until_ms = 0;
+};
 static MotorState g_motorState[SENSOR_COUNT_ALL];
 #endif
 
@@ -343,26 +354,50 @@ struct Vec3 {
   float x, y, z;
 };
 
-static inline float deg2rad(float d){ return d * (float)M_PI / 180.0f; }
-static inline float rad2deg(float r){ return r * 180.0f / (float)M_PI; }
-static inline float wrap180(float a){ while(a > 180.0f) a -= 360.0f; while(a < -180.0f) a += 360.0f; return a; }
-static inline float deltaAngleDeg(float a, float b){ return wrap180(a - b); }
-static inline float clamp01(float v){ if (v < 0.0f) return 0.0f; if (v > 1.0f) return 1.0f; return v; }
-static inline float vecDot(const Vec3& a, const Vec3& b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline float deg2rad(float d) {
+  return d * (float)M_PI / 180.0f;
+}
+static inline float rad2deg(float r) {
+  return r * 180.0f / (float)M_PI;
+}
+static inline float wrap180(float a) {
+  while (a > 180.0f) a -= 360.0f;
+  while (a < -180.0f) a += 360.0f;
+  return a;
+}
+static inline float deltaAngleDeg(float a, float b) {
+  return wrap180(a - b);
+}
+static inline float clamp01(float v) {
+  if (v < 0.0f) return 0.0f;
+  if (v > 1.0f) return 1.0f;
+  return v;
+}
+static inline float vecDot(const Vec3& a, const Vec3& b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
 static inline Vec3 vecCross(const Vec3& a, const Vec3& b) {
   Vec3 out{
-    a.y*b.z - a.z*b.y,
-    a.z*b.x - a.x*b.z,
-    a.x*b.y - a.y*b.x
+    a.y * b.z - a.z * b.y,
+    a.z * b.x - a.x * b.z,
+    a.x * b.y - a.y * b.x
   };
   return out;
 }
-static inline float vecNorm(const Vec3& v){ return sqrtf(vecDot(v, v)); }
-static inline Vec3 vecScale(const Vec3& v, float s){ Vec3 out{v.x*s, v.y*s, v.z*s}; return out; }
-static inline Vec3 vecSub(const Vec3& a, const Vec3& b){ Vec3 out{a.x-b.x, a.y-b.y, a.z-b.z}; return out; }
+static inline float vecNorm(const Vec3& v) {
+  return sqrtf(vecDot(v, v));
+}
+static inline Vec3 vecScale(const Vec3& v, float s) {
+  Vec3 out{ v.x * s, v.y * s, v.z * s };
+  return out;
+}
+static inline Vec3 vecSub(const Vec3& a, const Vec3& b) {
+  Vec3 out{ a.x - b.x, a.y - b.y, a.z - b.z };
+  return out;
+}
 static inline Vec3 vecNormalize(const Vec3& v) {
   const float n = vecNorm(v);
-  if (n <= 1e-6f) return Vec3{0.0f, 0.0f, 0.0f};
+  if (n <= 1e-6f) return Vec3{ 0.0f, 0.0f, 0.0f };
   return vecScale(v, 1.0f / n);
 }
 
@@ -371,22 +406,22 @@ static inline Vec3 vecNormalize(const Vec3& v) {
 // =====================
 MPU6050 mpu[SENSOR_COUNT_ALL];
 gag::Quaternion g_sensorFusionQuat[SENSOR_COUNT_ALL];
-bool g_sensorFusionInitialized[SENSOR_COUNT_ALL] = {false};
-unsigned long lastT[SENSOR_COUNT_ALL] = {0};
-unsigned long g_lastFifoResetMs[SENSOR_COUNT_ALL] = {0};
+bool g_sensorFusionInitialized[SENSOR_COUNT_ALL] = { false };
+unsigned long lastT[SENSOR_COUNT_ALL] = { 0 };
+unsigned long g_lastFifoResetMs[SENSOR_COUNT_ALL] = { 0 };
 const float alpha = 0.98f;
 const float kTiltCorrectionGain = 1.0f - alpha;
 const float kHeadingCorrectionGain = 0.08f;
-const Vec3 kWorldUp{0.0f, 0.0f, 1.0f};
-const Vec3 kWorldNorth{1.0f, 0.0f, 0.0f};
+const Vec3 kWorldUp{ 0.0f, 0.0f, 1.0f };
+const Vec3 kWorldNorth{ 1.0f, 0.0f, 0.0f };
 
 bool wristMagOk = false;
-Vec3 wristMagRaw{0,0,0};
+Vec3 wristMagRaw{ 0, 0, 0 };
 
 bool gy511Ok = true;
 bool gy511MagOk = true;
-Vec3 gy511Accel_g{0,0,0};
-Vec3 gy511MagRaw{0,0,0};
+Vec3 gy511Accel_g{ 0, 0, 0 };
+Vec3 gy511MagRaw{ 0, 0, 0 };
 unsigned long gy511LastT = 0;
 
 // =====================
@@ -438,13 +473,13 @@ unsigned long gy511LastT = 0;
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   // { 138, 243, -392, 1, 0, 0 }, // thumb
   // { -117, 252, -486, -1, 1, 1 }, // index
-  { -1602, -847, 2079, 47, -26, 24 }, // thumb
-  { 1313, -1382, 1813, 142, 21, 20 }, // index
-  { -1367, -1257, 1421, 250, 92, 52 }, // middle
-  { 0, 0, 0, 0, 0, 0 }, // ring
-  { 0, 0, 0, 0, 0, 0 }, // little
-  { -24, 2376, 2781, 0, 0, 0 }, // wrist aux (accel-only used in this sketch)
-  { -2209, -223, 2590, -145, 38, -19 }, // wrist MPU9250
+  { -1602, -847, 2079, 47, -26, 24 },    // thumb
+  { 1313, -1382, 1813, 142, 21, 20 },    // index
+  { -1367, -1257, 1421, 250, 92, 52 },   // middle
+  { 0, 0, 0, 0, 0, 0 },                  // ring
+  { 0, 0, 0, 0, 0, 0 },                  // little
+  { -24, 2376, 2781, 0, 0, 0 },          // wrist aux (accel-only used in this sketch)
+  { -2209, -223, 2590, -145, 38, -19 },  // wrist MPU9250
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -480,11 +515,11 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
   gag::Quaternion::mul(
-      gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
-      gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
   gag::Quaternion::mul(
-      gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
-      gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f)),
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f)),
 };
 
 // static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
@@ -552,86 +587,92 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
 // };
 
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
-  gag::Quaternion(0.96504295f, 0.02422791f, -0.23485672f, 0.11378706f), // thumb
-  gag::Quaternion(0.46711361f, -0.04733761f, 0.87993670f, 0.07263310f), // index
-  gag::Quaternion(0.87555826f, -0.05684654f, -0.47437924f, 0.07162798f), // middle
-  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f), // ring
-  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f), // little
-  gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f), // wrist aux (accel-only used in this sketch)
-  gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f), // wrist MPU9250
+  gag::Quaternion(0.96504295f, 0.02422791f, -0.23485672f, 0.11378706f),   // thumb
+  gag::Quaternion(0.46711361f, -0.04733761f, 0.87993670f, 0.07263310f),   // index
+  gag::Quaternion(0.87555826f, -0.05684654f, -0.47437924f, 0.07162798f),  // middle
+  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f),    // ring
+  gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f),    // little
+  gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist aux (accel-only used in this sketch)
+  gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
 };
 
 // =====================
 // MPU9250 / AK8963 registers
 // =====================
-#define MPU6050_ADDR   0x68
+#define MPU6050_ADDR 0x68
 #define MPU9250_ADDR_DEFAULT 0x68
-#define MPU9250_ADDR_ALT     0x69
-#define AK8963_ADDR    0x0C
-#define REG_SMPLRT_DIV     0x19
-#define REG_CONFIG         0x1A
-#define REG_GYRO_CONFIG    0x1B
-#define REG_ACCEL_CONFIG   0x1C
-#define REG_FIFO_EN        0x23
-#define REG_INT_PIN_CFG    0x37
-#define REG_INT_STATUS     0x3A
-#define REG_ACCEL_XOUT_H   0x3B
-#define REG_USER_CTRL      0x6A
-#define REG_PWR_MGMT_1     0x6B
-#define REG_FIFO_COUNT_H   0x72
-#define REG_FIFO_COUNT_L   0x73
-#define REG_FIFO_R_W       0x74
-#define REG_WHO_AM_I       0x75
-#define AK8963_WHO_AM_I    0x00
-#define AK8963_ST1         0x02
-#define AK8963_HXL         0x03
-#define AK8963_CNTL1       0x0A
-#define AK8963_ASAX        0x10
+#define MPU9250_ADDR_ALT 0x69
+#define AK8963_ADDR 0x0C
+#define REG_SMPLRT_DIV 0x19
+#define REG_CONFIG 0x1A
+#define REG_GYRO_CONFIG 0x1B
+#define REG_ACCEL_CONFIG 0x1C
+#define REG_FIFO_EN 0x23
+#define REG_INT_PIN_CFG 0x37
+#define REG_INT_STATUS 0x3A
+#define REG_ACCEL_XOUT_H 0x3B
+#define REG_USER_CTRL 0x6A
+#define REG_PWR_MGMT_1 0x6B
+#define REG_FIFO_COUNT_H 0x72
+#define REG_FIFO_COUNT_L 0x73
+#define REG_FIFO_R_W 0x74
+#define REG_WHO_AM_I 0x75
+#define AK8963_WHO_AM_I 0x00
+#define AK8963_ST1 0x02
+#define AK8963_HXL 0x03
+#define AK8963_CNTL1 0x0A
+#define AK8963_ASAX 0x10
 
 // =====================
 // LSM303DLHC / GY-511
 // =====================
-#define LSM_ACC_ADDR       0x19
-#define LSM_MAG_ADDR       0x1E
-#define LSM_CTRL_REG1_A    0x20
-#define LSM_CTRL_REG4_A    0x23
-#define LSM_CTRL_REG5_A    0x24
-#define LSM_OUT_X_L_A      0x28
+#define LSM_ACC_ADDR 0x19
+#define LSM_MAG_ADDR 0x1E
+#define LSM_CTRL_REG1_A 0x20
+#define LSM_CTRL_REG4_A 0x23
+#define LSM_CTRL_REG5_A 0x24
+#define LSM_OUT_X_L_A 0x28
 #define LSM_FIFO_CTRL_REG_A 0x2E
-#define LSM_FIFO_SRC_REG_A  0x2F
-#define LSM_CRA_REG_M      0x00
-#define LSM_CRB_REG_M      0x01
-#define LSM_MR_REG_M       0x02
-#define LSM_OUT_X_H_M      0x03
+#define LSM_FIFO_SRC_REG_A 0x2F
+#define LSM_CRA_REG_M 0x00
+#define LSM_CRB_REG_M 0x01
+#define LSM_MR_REG_M 0x02
+#define LSM_OUT_X_H_M 0x03
 
 // =====================
 // I2C helpers
 // =====================
-static void pcaReset(){
-  if (DRIVE_PCA_ADDR_PINS){
-    pinMode(PIN_PCA_A0, OUTPUT); pinMode(PIN_PCA_A1, OUTPUT); pinMode(PIN_PCA_A2, OUTPUT);
-    digitalWrite(PIN_PCA_A0, LOW); digitalWrite(PIN_PCA_A1, LOW); digitalWrite(PIN_PCA_A2, LOW);
+static void pcaReset() {
+  if (DRIVE_PCA_ADDR_PINS) {
+    pinMode(PIN_PCA_A0, OUTPUT);
+    pinMode(PIN_PCA_A1, OUTPUT);
+    pinMode(PIN_PCA_A2, OUTPUT);
+    digitalWrite(PIN_PCA_A0, LOW);
+    digitalWrite(PIN_PCA_A1, LOW);
+    digitalWrite(PIN_PCA_A2, LOW);
   }
   pinMode(PIN_PCA_RST, OUTPUT);
-  digitalWrite(PIN_PCA_RST, LOW); delay(2);
-  digitalWrite(PIN_PCA_RST, HIGH); delay(2);
+  digitalWrite(PIN_PCA_RST, LOW);
+  delay(2);
+  digitalWrite(PIN_PCA_RST, HIGH);
+  delay(2);
 }
 
-static void pcaSelect(uint8_t ch){
+static void pcaSelect(uint8_t ch) {
   Wire.beginTransmission(pca_addr);
   Wire.write(1 << ch);
   Wire.endTransmission();
   delayMicroseconds(200);
 }
 
-static void i2cWriteByte(uint8_t addr, uint8_t reg, uint8_t val){
+static void i2cWriteByte(uint8_t addr, uint8_t reg, uint8_t val) {
   Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.write(val);
   Wire.endTransmission();
 }
 
-static uint8_t i2cReadByte(uint8_t addr, uint8_t reg){
+static uint8_t i2cReadByte(uint8_t addr, uint8_t reg) {
   Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.endTransmission(false);
@@ -640,7 +681,7 @@ static uint8_t i2cReadByte(uint8_t addr, uint8_t reg){
   return 0;
 }
 
-static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t*buf, uint8_t len){
+static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t len) {
   Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.endTransmission(false);
@@ -648,7 +689,7 @@ static void i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t*buf, uint8_t len){
   for (uint8_t i = 0; i < len && Wire.available(); ++i) buf[i] = Wire.read();
 }
 
-static bool i2cAddressResponds(uint8_t addr){
+static bool i2cAddressResponds(uint8_t addr) {
   Wire.beginTransmission(addr);
   return Wire.endTransmission() == 0;
 }
@@ -682,14 +723,14 @@ static void printWristMpuDiagnostic() {
   delay(10);
   const uint8_t pwr = i2cReadByte(diagAddr, REG_PWR_MGMT_1);
   const uint8_t who = i2cReadByte(diagAddr, REG_WHO_AM_I);
-  uint8_t buf[14] = {0};
+  uint8_t buf[14] = { 0 };
   i2cReadBytes(diagAddr, REG_ACCEL_XOUT_H, buf, 14);
-  const int16_t ax = (int16_t)((buf[0]<<8)  | buf[1]);
-  const int16_t ay = (int16_t)((buf[2]<<8)  | buf[3]);
-  const int16_t az = (int16_t)((buf[4]<<8)  | buf[5]);
-  const int16_t gx = (int16_t)((buf[8]<<8)  | buf[9]);
-  const int16_t gy = (int16_t)((buf[10]<<8) | buf[11]);
-  const int16_t gz = (int16_t)((buf[12]<<8) | buf[13]);
+  const int16_t ax = (int16_t)((buf[0] << 8) | buf[1]);
+  const int16_t ay = (int16_t)((buf[2] << 8) | buf[3]);
+  const int16_t az = (int16_t)((buf[4] << 8) | buf[5]);
+  const int16_t gx = (int16_t)((buf[8] << 8) | buf[9]);
+  const int16_t gy = (int16_t)((buf[10] << 8) | buf[11]);
+  const int16_t gz = (int16_t)((buf[12] << 8) | buf[13]);
 
   Serial.printf("  selected=0x%02X who=0x%02X pwr_mgmt_1=0x%02X\n",
                 (unsigned)diagAddr,
@@ -808,7 +849,7 @@ static bool readMpuFifoMotion6(uint8_t sensorIdx, int16_t& ax, int16_t& ay, int1
     return false;
   }
 
-  uint8_t packet[MPU_FIFO_PACKET_SIZE_BYTES] = {0};
+  uint8_t packet[MPU_FIFO_PACKET_SIZE_BYTES] = { 0 };
   uint16_t packetsRemaining = (uint16_t)(fifoCount / MPU_FIFO_PACKET_SIZE_BYTES);
   while (packetsRemaining > 1u) {
     i2cReadBytes(addr, REG_FIFO_R_W, packet, MPU_FIFO_PACKET_SIZE_BYTES);
@@ -824,7 +865,13 @@ static bool readMpuFifoMotion6(uint8_t sensorIdx, int16_t& ax, int16_t& ay, int1
   gz = (int16_t)((packet[10] << 8) | packet[11]);
   return true;
 #else
-  (void)sensorIdx; (void)ax; (void)ay; (void)az; (void)gx; (void)gy; (void)gz;
+  (void)sensorIdx;
+  (void)ax;
+  (void)ay;
+  (void)az;
+  (void)gx;
+  (void)gy;
+  (void)gz;
   return false;
 #endif
 }
@@ -835,8 +882,7 @@ static void maybeResetMpuFifo(uint8_t sensorIdx) {
   const uint16_t fifoCount = readMpuFifoCountBytes(sensorIdx);
   const uint32_t now = millis();
   const bool fifoNearOverflow = (fifoCount >= fifoResetThresholdBytesForSensor(sensorIdx));
-  const bool fifoStalled = (fifoCount >= (uint16_t)(MPU_FIFO_PACKET_SIZE_BYTES * 8u)) &&
-                           ((uint32_t)(now - g_lastFifoResetMs[sensorIdx]) >= (uint32_t)GAG_FIFO_RESET_INTERVAL_MS);
+  const bool fifoStalled = (fifoCount >= (uint16_t)(MPU_FIFO_PACKET_SIZE_BYTES * 8u)) && ((uint32_t)(now - g_lastFifoResetMs[sensorIdx]) >= (uint32_t)GAG_FIFO_RESET_INTERVAL_MS);
   if (fifoNearOverflow || fifoStalled) {
     resetMpuFifo(sensorIdx);
   }
@@ -849,7 +895,7 @@ static void printMpuFifoBootTestForSensor(uint8_t sensorIdx) {
 #if GAG_ENABLE_FIFO_BOOT_TEST
   if (!sensorCanUseRotationFifo(sensorIdx)) return;
   delay(50);
-  int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
+  int16_t ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
   const bool ok = readMpuFifoMotion6(sensorIdx, ax, ay, az, gx, gy, gz);
   Serial.printf("FIFO boot test sensor=%u label=%s count=%u max=%u reset_at=%u ok=%u sample={%d,%d,%d,%d,%d,%d}\n",
                 (unsigned)sensorIdx,
@@ -930,7 +976,7 @@ static void printFifoCapabilityReport() {
 // =====================
 // Magnetometer helpers
 // =====================
-static float yawFromMagTiltComp(const Vec3& m, float rollDeg, float pitchDeg){
+static float yawFromMagTiltComp(const Vec3& m, float rollDeg, float pitchDeg) {
   float roll = deg2rad(rollDeg);
   float pitch = deg2rad(pitchDeg);
   float cr = cosf(roll), sr = sinf(roll);
@@ -944,7 +990,7 @@ static float yawFromMagTiltComp(const Vec3& m, float rollDeg, float pitchDeg){
 // Optional vibration
 // =====================
 #if GAG_ENABLE_VIBRATION
-static const uint8_t STARTUP_VIBRATION_TEST_SENSORS[] = {SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE};
+static const uint8_t STARTUP_VIBRATION_TEST_SENSORS[] = { SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE };
 
 static void setMotorOutput(uint8_t sensorIdx, bool on) {
   if (sensorIdx >= SENSOR_COUNT_ALL) return;
@@ -1011,7 +1057,10 @@ static void runStartupVibrationTest() {
       updateVibrations();
       for (uint8_t i = 0; i < sizeof(STARTUP_VIBRATION_TEST_SENSORS); ++i) {
         const uint8_t sensorIdx = STARTUP_VIBRATION_TEST_SENSORS[i];
-        if (g_motorState[sensorIdx].active) { anyActive = true; break; }
+        if (g_motorState[sensorIdx].active) {
+          anyActive = true;
+          break;
+        }
       }
       if (!anyActive) break;
       delay(10);
@@ -1092,7 +1141,7 @@ static inline uint8_t sensorToVizSlot(uint8_t sensorIdx) {
 }
 
 static gag::Quaternion quatFromAxisAngleRad(float ax, float ay, float az, float rad) {
-  const float axisNorm = sqrtf(ax*ax + ay*ay + az*az);
+  const float axisNorm = sqrtf(ax * ax + ay * ay + az * az);
   if (axisNorm <= 1e-6f || fabsf(rad) <= 1e-6f) return gag::Quaternion();
   const float half = 0.5f * rad;
   const float s = sinf(half) / axisNorm;
@@ -1128,14 +1177,16 @@ static gag::Quaternion quatNlerp(const gag::Quaternion& aIn, const gag::Quaterni
   a.normalizeInPlace();
   b.normalizeInPlace();
   if (gag::Quaternion::dot(a, b) < 0.0f) {
-    b.w = -b.w; b.x = -b.x; b.y = -b.y; b.z = -b.z;
+    b.w = -b.w;
+    b.x = -b.x;
+    b.y = -b.y;
+    b.z = -b.z;
   }
   gag::Quaternion out(
     a.w + (b.w - a.w) * tt,
     a.x + (b.x - a.x) * tt,
     a.y + (b.y - a.y) * tt,
-    a.z + (b.z - a.z) * tt
-  );
+    a.z + (b.z - a.z) * tt);
   out.normalizeInPlace();
   return out;
 }
@@ -1147,7 +1198,7 @@ static gag::Quaternion quatFromTwoUnitVectors(const Vec3& fromIn, const Vec3& to
   const float d = dRaw < -1.0f ? -1.0f : (dRaw > 1.0f ? 1.0f : dRaw);
   if (d >= 0.999999f) return gag::Quaternion();
   if (d <= -0.999999f) {
-    const Vec3 helper = (fabsf(from.z) < 0.9f) ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{1.0f, 0.0f, 0.0f};
+    const Vec3 helper = (fabsf(from.z) < 0.9f) ? Vec3{ 0.0f, 0.0f, 1.0f } : Vec3{ 1.0f, 0.0f, 0.0f };
     const Vec3 axis = vecNormalize(vecCross(from, helper));
     return quatFromAxisAngleRad(axis.x, axis.y, axis.z, (float)M_PI);
   }
@@ -1162,7 +1213,7 @@ static gag::Quaternion integrateGyroQuaternion(const gag::Quaternion& currentIn,
                                                float dtSec) {
   gag::Quaternion current = currentIn;
   current.normalizeInPlace();
-  const float omegaDegPerSec = sqrtf(gxDegPerSec*gxDegPerSec + gyDegPerSec*gyDegPerSec + gzDegPerSec*gzDegPerSec);
+  const float omegaDegPerSec = sqrtf(gxDegPerSec * gxDegPerSec + gyDegPerSec * gyDegPerSec + gzDegPerSec * gzDegPerSec);
   if (omegaDegPerSec <= 1e-6f || dtSec <= 0.0f) return current;
   const gag::Quaternion delta = quatFromAxisAngleRad(gxDegPerSec, gyDegPerSec, gzDegPerSec, deg2rad(omegaDegPerSec * dtSec));
   gag::Quaternion out = gag::Quaternion::mul(current, delta);
@@ -1226,7 +1277,7 @@ static void remapFingerRawAxesToGloveFrame(uint8_t sensorIdx,
     return;
   }
 
-   if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
+  if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
     // Index IMU is mounted differently from the other finger modules.
     ax = axIn;
     ay = (int16_t)-azIn;
@@ -1236,6 +1287,18 @@ static void remapFingerRawAxesToGloveFrame(uint8_t sensorIdx,
     gz = (int16_t)gyIn;
     return;
   }
+
+  // if (sensorIdx == SENSOR_WRIST_AUX) {
+  //   // Index IMU is mounted differently from the other finger modules.
+  //   ax = (int16_t)axIn;
+  //   ay = (int16_t)azIn;
+  //   az = (int16_t)ayIn;
+  //   gx = (int16_t)gxIn;
+  //   gy = (int16_t)gzIn;
+  //   gz = (int16_t)gyIn;
+  //   return;
+  // }
+
 
   // Default mapping for the other finger modules in the current glove build.
   ax = azIn;
@@ -1284,10 +1347,13 @@ static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx) {
   return g_sensorFusionInitialized[sensorIdx];
 }
 
-static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
+static gag::Quaternion physicalFixedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
   const gag::Quaternion physicalFixed = applyDefaultSensorRotation(sensorIdx, rawQuaternionForPhysicalSensor(sensorIdx));
-  const gag::Quaternion minorFixed = applyMinorRotationOffset(sensorIdx, physicalFixed);
-  return g_offsets.applySoftwareOffset(sensorIdx, minorFixed);
+  return applyMinorRotationOffset(sensorIdx, physicalFixed);
+}
+
+static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx) {
+  return g_offsets.applySoftwareOffset(sensorIdx, physicalFixedQuaternionForPhysicalSensor(sensorIdx));
 }
 
 // Select the single wrist sensor used by the hand skeleton and recognizer.
@@ -1342,13 +1408,13 @@ static void maybeLogSerialSensorQuaternions() {
 // =====================
 // GY-511
 // =====================
-static bool initGY511(){
+static bool initGY511() {
   pcaSelect(CH_GY511);
-  i2cWriteByte(LSM_ACC_ADDR, LSM_CTRL_REG1_A, 0x57); // 100Hz, XYZ enable
-  i2cWriteByte(LSM_ACC_ADDR, LSM_CTRL_REG4_A, 0x00); // ±2g
-  i2cWriteByte(LSM_MAG_ADDR, LSM_CRA_REG_M,  0x14); // 30Hz
-  i2cWriteByte(LSM_MAG_ADDR, LSM_CRB_REG_M,  0x20); // +/-1.3 gauss
-  i2cWriteByte(LSM_MAG_ADDR, LSM_MR_REG_M,   0x00); // continuous
+  i2cWriteByte(LSM_ACC_ADDR, LSM_CTRL_REG1_A, 0x57);  // 100Hz, XYZ enable
+  i2cWriteByte(LSM_ACC_ADDR, LSM_CTRL_REG4_A, 0x00);  // ±2g
+  i2cWriteByte(LSM_MAG_ADDR, LSM_CRA_REG_M, 0x14);    // 30Hz
+  i2cWriteByte(LSM_MAG_ADDR, LSM_CRB_REG_M, 0x20);    // +/-1.3 gauss
+  i2cWriteByte(LSM_MAG_ADDR, LSM_MR_REG_M, 0x00);     // continuous
   delay(20);
   const uint8_t ctrl1a = i2cReadByte(LSM_ACC_ADDR, LSM_CTRL_REG1_A);
   const uint8_t who = i2cReadByte(LSM_MAG_ADDR, 0x0A);
@@ -1357,28 +1423,30 @@ static bool initGY511(){
   return (ctrl1a == 0x57) || gy511MagOk;
 }
 
-static bool readGY511Accel(Vec3 &accel_g){
+static bool readGY511Accel(Vec3& accel_g) {
   pcaSelect(CH_GY511);
-  uint8_t buf[6] = {0};
+  uint8_t buf[6] = { 0 };
   i2cReadBytes(LSM_ACC_ADDR, (LSM_OUT_X_L_A | 0x80), buf, 6);
-  int16_t ax = (int16_t)((buf[1]<<8) | buf[0]);
-  int16_t ay = (int16_t)((buf[3]<<8) | buf[2]);
-  int16_t az = (int16_t)((buf[5]<<8) | buf[4]);
+  int16_t ax = (int16_t)((buf[1] << 8) | buf[0]);
+  int16_t ay = (int16_t)((buf[3] << 8) | buf[2]);
+  int16_t az = (int16_t)((buf[5] << 8) | buf[4]);
   const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST_AUX);
-  ax -= hw.ax; ay -= hw.ay; az -= hw.az;
+  ax -= hw.ax;
+  ay -= hw.ay;
+  az -= hw.az;
   accel_g.x = (float)ax / 16384.0f;
   accel_g.y = (float)ay / 16384.0f;
   accel_g.z = (float)az / 16384.0f;
   return true;
 }
 
-static bool readGY511Mag(Vec3 &magRaw){
+static bool readGY511Mag(Vec3& magRaw) {
   pcaSelect(CH_GY511);
-  uint8_t buf[6] = {0};
+  uint8_t buf[6] = { 0 };
   i2cReadBytes(LSM_MAG_ADDR, LSM_OUT_X_H_M, buf, 6);
-  int16_t mx = (int16_t)((buf[0]<<8) | buf[1]);
-  int16_t mz = (int16_t)((buf[2]<<8) | buf[3]);
-  int16_t my = (int16_t)((buf[4]<<8) | buf[5]);
+  int16_t mx = (int16_t)((buf[0] << 8) | buf[1]);
+  int16_t mz = (int16_t)((buf[2] << 8) | buf[3]);
+  int16_t my = (int16_t)((buf[4] << 8) | buf[5]);
   magRaw.x = (float)mx;
   magRaw.y = (float)my;
   magRaw.z = (float)mz;
@@ -1396,12 +1464,15 @@ static void remapGy511VectorToGloveFrame(Vec3& v) {
   // v.x = -zIn;
   // v.y = -xIn;
   // v.z = -yIn;
-  v.x = zIn;
-  v.y = xIn;
-  v.z = yIn;
+  // v.x = zIn;
+  // v.y = xIn;
+  // v.z = yIn;
+  v.x = yIn;
+  v.y = -zIn;
+  v.z = xIn;
 }
 
-static void updateGY511(){
+static void updateGY511() {
   if (!gy511Ok) return;
   Vec3 a;
   if (!readGY511Accel(a)) return;
@@ -1431,35 +1502,37 @@ static void updateGY511(){
 // =====================
 // Wrist AK8963
 // =====================
-static bool initWristMagAK8963(){
+static bool initWristMagAK8963() {
   if (!isSensorEnabled(SENSOR_WRIST)) return false;
   pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
-  i2cWriteByte(wristMpuAddress(), REG_INT_PIN_CFG, 0x02); // bypass enable
+  i2cWriteByte(wristMpuAddress(), REG_INT_PIN_CFG, 0x02);  // bypass enable
   delay(10);
   uint8_t who = i2cReadByte(AK8963_ADDR, AK8963_WHO_AM_I);
   if (who != 0x48) return false;
-  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x00); delay(10);
-  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x16); delay(10); // continuous 2, 16-bit
+  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x00);
+  delay(10);
+  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x16);
+  delay(10);  // continuous 2, 16-bit
   return true;
 }
 
-static bool readWristMag(Vec3 &magOut){
+static bool readWristMag(Vec3& magOut) {
   if (!isSensorEnabled(SENSOR_WRIST)) return false;
   pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
   uint8_t st1 = i2cReadByte(AK8963_ADDR, AK8963_ST1);
   if (!(st1 & 0x01)) return false;
-  uint8_t buf[7] = {0};
+  uint8_t buf[7] = { 0 };
   i2cReadBytes(AK8963_ADDR, AK8963_HXL, buf, 7);
-  int16_t mx = (int16_t)((buf[1]<<8) | buf[0]);
-  int16_t my = (int16_t)((buf[3]<<8) | buf[2]);
-  int16_t mz = (int16_t)((buf[5]<<8) | buf[4]);
+  int16_t mx = (int16_t)((buf[1] << 8) | buf[0]);
+  int16_t my = (int16_t)((buf[3] << 8) | buf[2]);
+  int16_t mz = (int16_t)((buf[5] << 8) | buf[4]);
   magOut.x = (float)mx;
   magOut.y = (float)my;
   magOut.z = (float)mz;
   return true;
 }
 
-static void updateWristMagYaw(){
+static void updateWristMagYaw() {
   if (!wristMagOk) return;
   if (!g_sensorFusionInitialized[SENSOR_WRIST]) return;
   Vec3 m;
@@ -1474,7 +1547,7 @@ static void updateWristMagYaw(){
 // =====================
 // Current implementation keeps the original non-DMP accel/gyro pipeline.
 // A future DMP quaternion path should be wired under GAG_USE_MPU_DMP_QUAT_FIFO.
-static bool initOneIMU(uint8_t idx){
+static bool initOneIMU(uint8_t idx) {
   if (!isSensorEnabled(idx)) return true;
   if (!isMpuBackedSensor(idx)) return true;
   const uint8_t ch = ACTIVE_CHANNELS[idx];
@@ -1484,16 +1557,17 @@ static bool initOneIMU(uint8_t idx){
     updateWristMpuAddress();
     const uint8_t wristAddr = wristMpuAddress();
     const uint8_t wristWho = (wristAddr != 0) ? i2cReadByte(wristAddr, REG_WHO_AM_I) : 0;
-    #if GAG_ENABLE_WRIST_MPU_PROBE_LOG
+#if GAG_ENABLE_WRIST_MPU_PROBE_LOG
     Serial.printf("Wrist MPU probe: ch=%u addr68=0x%02X addr69=0x%02X selected=0x%02X who=0x%02X\n",
                   (unsigned)ch,
                   (unsigned)i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I),
                   (unsigned)i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I),
                   (unsigned)wristAddr,
                   (unsigned)wristWho);
-    #endif
+#endif
     if (!(wristWho == 0x71 || wristWho == 0x73)) return false;
-    i2cWriteByte(wristAddr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO); delay(10);
+    i2cWriteByte(wristAddr, REG_PWR_MGMT_1, MPU_PWR_CLKSEL_ZGYRO);
+    delay(10);
     i2cWriteByte(wristAddr, REG_GYRO_CONFIG, 0x00);
     i2cWriteByte(wristAddr, REG_ACCEL_CONFIG, 0x00);
     configureMpuFifo(idx);
@@ -1517,24 +1591,24 @@ static bool initOneIMU(uint8_t idx){
   return ok;
 }
 
-static void updateOneIMU(uint8_t idx){
+static void updateOneIMU(uint8_t idx) {
   if (!isSensorEnabled(idx)) return;
   if (!isMpuBackedSensor(idx)) return;
-  int16_t ax=0, ay=0, az=0, gx=0, gy=0, gz=0;
+  int16_t ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
   maybeResetMpuFifo(idx);
 
   bool haveSample = readMpuFifoMotion6(idx, ax, ay, az, gx, gy, gz);
   if (!haveSample) {
     pcaSelect(ACTIVE_CHANNELS[idx]);
     if (idx == SENSOR_WRIST) {
-      uint8_t buf[14] = {0};
+      uint8_t buf[14] = { 0 };
       i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
-      ax = (int16_t)((buf[0]<<8)  | buf[1]);
-      ay = (int16_t)((buf[2]<<8)  | buf[3]);
-      az = (int16_t)((buf[4]<<8)  | buf[5]);
-      gx = (int16_t)((buf[8]<<8)  | buf[9]);
-      gy = (int16_t)((buf[10]<<8) | buf[11]);
-      gz = (int16_t)((buf[12]<<8) | buf[13]);
+      ax = (int16_t)((buf[0] << 8) | buf[1]);
+      ay = (int16_t)((buf[2] << 8) | buf[3]);
+      az = (int16_t)((buf[4] << 8) | buf[5]);
+      gx = (int16_t)((buf[8] << 8) | buf[9]);
+      gy = (int16_t)((buf[10] << 8) | buf[11]);
+      gz = (int16_t)((buf[12] << 8) | buf[13]);
     } else {
       mpu[idx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
     }
@@ -1542,8 +1616,12 @@ static void updateOneIMU(uint8_t idx){
 
   if (idx == SENSOR_WRIST) {
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
-    ax -= hw.ax; ay -= hw.ay; az -= hw.az;
-    gx -= hw.gx; gy -= hw.gy; gz -= hw.gz;
+    ax -= hw.ax;
+    ay -= hw.ay;
+    az -= hw.az;
+    gx -= hw.gx;
+    gy -= hw.gy;
+    gz -= hw.gz;
   } else if (isFingerSensor(idx)) {
     remapFingerRawAxesToGloveFrame(idx, ax, ay, az, gx, gy, gz);
   }
@@ -1591,20 +1669,25 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
 
   pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
   if (sensorIdx == SENSOR_WRIST) {
-    uint8_t buf[14] = {0};
+    uint8_t buf[14] = { 0 };
     i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 14);
-    out.ax = (int16_t)((buf[0]<<8)  | buf[1]);
-    out.ay = (int16_t)((buf[2]<<8)  | buf[3]);
-    out.az = (int16_t)((buf[4]<<8)  | buf[5]);
-    out.gx = (int16_t)((buf[8]<<8)  | buf[9]);
-    out.gy = (int16_t)((buf[10]<<8) | buf[11]);
-    out.gz = (int16_t)((buf[12]<<8) | buf[13]);
+    out.ax = (int16_t)((buf[0] << 8) | buf[1]);
+    out.ay = (int16_t)((buf[2] << 8) | buf[3]);
+    out.az = (int16_t)((buf[4] << 8) | buf[5]);
+    out.gx = (int16_t)((buf[8] << 8) | buf[9]);
+    out.gy = (int16_t)((buf[10] << 8) | buf[11]);
+    out.gz = (int16_t)((buf[12] << 8) | buf[13]);
     return true;
   }
 
   int16_t ax, ay, az, gx, gy, gz;
   mpu[sensorIdx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-  out.ax = ax; out.ay = ay; out.az = az; out.gx = gx; out.gy = gy; out.gz = gz;
+  out.ax = ax;
+  out.ay = ay;
+  out.az = az;
+  out.gx = gx;
+  out.gy = gy;
+  out.gz = gz;
   return true;
 }
 
@@ -1723,8 +1806,8 @@ static void measureHardwareOffsetsAtBoot() {
 // Boot-time software offset neutral capture
 // =====================
 static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, bool includeMinorRotationOffset, uint8_t samples = 16) {
-  gag::Quaternion ref(1,0,0,0);
-  gag::Quaternion sum(0,0,0,0);
+  gag::Quaternion ref(1, 0, 0, 0);
+  gag::Quaternion sum(0, 0, 0, 0);
   bool haveRef = false;
 
   if (!physicalSensorQuaternionAvailable(sensorIdx)) {
@@ -1745,11 +1828,20 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, bool includeM
     }
     q.normalizeInPlace();
 
-    if (!haveRef) { ref = q; haveRef = true; }
-    if (gag::Quaternion::dot(ref, q) < 0.0f) {
-      q.w = -q.w; q.x = -q.x; q.y = -q.y; q.z = -q.z;
+    if (!haveRef) {
+      ref = q;
+      haveRef = true;
     }
-    sum.w += q.w; sum.x += q.x; sum.y += q.y; sum.z += q.z;
+    if (gag::Quaternion::dot(ref, q) < 0.0f) {
+      q.w = -q.w;
+      q.x = -q.x;
+      q.y = -q.y;
+      q.z = -q.z;
+    }
+    sum.w += q.w;
+    sum.x += q.x;
+    sum.y += q.y;
+    sum.z += q.z;
     delay(10);
   }
 
@@ -1758,7 +1850,7 @@ static gag::Quaternion averageCurrentSensorQuat(uint8_t sensorIdx, bool includeM
 }
 
 static gag::Quaternion computeMinorRotationCompensation(const gag::Quaternion& currentPhysicalFixed,
-                                                      const gag::Quaternion& desiredOrientation = gag::Quaternion()) {
+                                                        const gag::Quaternion& desiredOrientation = gag::Quaternion()) {
   gag::Quaternion current = currentPhysicalFixed;
   current.normalizeInPlace();
   gag::Quaternion desired = desiredOrientation;
@@ -1877,9 +1969,9 @@ static void addPoseGesture(const char* name,
                            uint32_t maxTimeMs,
                            const gag::GestureAction& action) {
   gag::GestureDef g;
-  strncpy(g.name, name, sizeof(g.name)-1);
-  strncpy(g.command, command, sizeof(g.command)-1);
-  strncpy(g.label, label, sizeof(g.label)-1);
+  strncpy(g.name, name, sizeof(g.name) - 1);
+  strncpy(g.command, command, sizeof(g.command) - 1);
+  strncpy(g.label, label, sizeof(g.label) - 1);
   g.threshold_rad = deg2rad(thresholdDeg);
   g.recognition_delay_ms = cooldownMs;
   g.max_time_ms = maxTimeMs;
@@ -1906,7 +1998,7 @@ static void installDefaultGestures() {
     a.vibrate_duration_ms = 220;
     addPoseGesture("little_up_mode", "GAG_CYCLE_MODE", "MODE",
                    gag::Sensor::LITTLE,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-28.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -28.0f),
                    18.0f, 700, 1200, a);
   }
 
@@ -1924,7 +2016,7 @@ static void installDefaultGestures() {
     // a.vibrate_duration_ms = 30;
     addPoseGesture("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
                    18.0f, 320, 900, a);
   }
 
@@ -1937,42 +2029,58 @@ static void installDefaultGestures() {
     a.mouse.button = MOUSE_RIGHT;
     addPoseGesture("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                    gag::Sensor::RING,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
                    18.0f, 320, 900, a);
   }
 
   // Thumb mouse movement. These are intentionally simple and depend on the
   // software neutral offsets having zeroed the current thumb pose.
   {
-    gag::GestureAction a; a.blink_visualization = true; a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = MouseActionType::MOVE; a.mouse.dx = +12; a.mouse.dy = 0;
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_YELLOW;
+    a.mouse.type = MouseActionType::MOVE;
+    a.mouse.dx = +12;
+    a.mouse.dy = 0;
     addPoseGesture("thumb_move_right", "MOUSE_MOVE_RIGHT", "MR",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,-22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -22.0f),
                    16.0f, 180, 900, a);
   }
   {
-    gag::GestureAction a; a.blink_visualization = true; a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = -12; a.mouse.dy = 0;
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_YELLOW;
+    a.mouse.type = gag::MouseActionType::MOVE;
+    a.mouse.dx = -12;
+    a.mouse.dy = 0;
     addPoseGesture("thumb_move_left", "MOUSE_MOVE_LEFT", "ML",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1,0,0,+22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, +22.0f),
                    16.0f, 180, 900, a);
   }
   {
-    gag::GestureAction a; a.blink_visualization = true; a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = 0; a.mouse.dy = -12;
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_YELLOW;
+    a.mouse.type = gag::MouseActionType::MOVE;
+    a.mouse.dx = 0;
+    a.mouse.dy = -12;
     addPoseGesture("thumb_move_up", "MOUSE_MOVE_UP", "MU",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0,0,1, -22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -22.0f),
                    16.0f, 180, 900, a);
   }
   {
-    gag::GestureAction a; a.blink_visualization = true; a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE; a.mouse.dx = 0; a.mouse.dy = +12;
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_YELLOW;
+    a.mouse.type = gag::MouseActionType::MOVE;
+    a.mouse.dx = 0;
+    a.mouse.dy = +12;
     addPoseGesture("thumb_move_down", "MOUSE_MOVE_DOWN", "MD",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0,0,1,22.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, 22.0f),
                    16.0f, 180, 900, a);
   }
 }
@@ -2023,11 +2131,11 @@ static void feedRecognizerFromCurrentPose() {
   // Wrist accel can be used later for acceleration-driven gestures.
   if (isSensorEnabled(SENSOR_WRIST)) {
     pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST]);
-    uint8_t buf[6] = {0};
+    uint8_t buf[6] = { 0 };
     i2cReadBytes(wristMpuAddress(), REG_ACCEL_XOUT_H, buf, 6);
-    int16_t ax = (int16_t)((buf[0]<<8) | buf[1]);
-    int16_t ay = (int16_t)((buf[2]<<8) | buf[3]);
-    int16_t az = (int16_t)((buf[4]<<8) | buf[5]);
+    int16_t ax = (int16_t)((buf[0] << 8) | buf[1]);
+    int16_t ay = (int16_t)((buf[2] << 8) | buf[3]);
+    int16_t az = (int16_t)((buf[4] << 8) | buf[5]);
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(SENSOR_WRIST);
     gag::AccelData a((float)(ax - hw.ax) / 16384.0f,
                      (float)(ay - hw.ay) / 16384.0f,
@@ -2044,6 +2152,8 @@ static void feedRecognizerFromCurrentPose() {
 static gag::viz::FrameInput buildVizFrame() {
   gag::viz::FrameInput frame;
   frame.sensor_count = SENSOR_COUNT_ALL;
+  frame.hand_relative_rotation = GAG_VIZ_HAND_RELATIVE_ROTATION;
+  frame.cube_relative_rotation = GAG_VIZ_CUBES_RELATIVE_ROTATION;
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     const uint8_t vizIdx = sensorToVizSlot(i);
     frame.base_color[vizIdx] = SENSOR_COLORS[i];
@@ -2052,10 +2162,18 @@ static gag::viz::FrameInput buildVizFrame() {
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
-    frame.sensor_q[sensorToVizSlot(s)] = correctedQuaternionForPhysicalSensor(s);
+    const uint8_t vizIdx = sensorToVizSlot(s);
+    frame.sensor_q[vizIdx] = GAG_VIZ_CUBES_RELATIVE_ROTATION
+                               ? physicalFixedQuaternionForPhysicalSensor(s)
+                               : correctedQuaternionForPhysicalSensor(s);
+    frame.hand_sensor_q[vizIdx] = GAG_VIZ_HAND_RELATIVE_ROTATION
+                                    ? physicalFixedQuaternionForPhysicalSensor(s)
+                                    : correctedQuaternionForPhysicalSensor(s);
   }
 
-  frame.hand_wrist_q = correctedLogicalWristQuaternion();
+  frame.hand_wrist_q = GAG_VIZ_HAND_RELATIVE_ROTATION
+                         ? physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor())
+                         : correctedLogicalWristQuaternion();
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
 
@@ -2070,11 +2188,11 @@ static void resetFusionState() {
     g_lastFifoResetMs[i] = 0;
   }
   wristMagOk = false;
-  wristMagRaw = Vec3{0,0,0};
+  wristMagRaw = Vec3{ 0, 0, 0 };
   gy511Ok = true;
   gy511MagOk = true;
-  gy511Accel_g = Vec3{0,0,0};
-  gy511MagRaw = Vec3{0,0,0};
+  gy511Accel_g = Vec3{ 0, 0, 0 };
+  gy511MagRaw = Vec3{ 0, 0, 0 };
   gy511LastT = 0;
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
@@ -2174,7 +2292,7 @@ void setup() {
   g_restartButtonPrevPressed = readRestartButtonPressed();
 
   tft.init();
-  tft.setRotation(GAG_TFT_ROTATION); // TFT_eSPI rotates the whole UI, including text primitives.
+  tft.setRotation(GAG_TFT_ROTATION);  // TFT_eSPI rotates the whole UI, including text primitives.
   initializeGloveRuntime(true);
 
 #if GAG_ENABLE_BLE_MOUSE

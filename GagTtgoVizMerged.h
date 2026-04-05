@@ -55,20 +55,26 @@ enum Mode : uint8_t {
 
 struct FrameInput {
   Quaternion sensor_q[8];
+  Quaternion hand_sensor_q[8];
   bool present[8];
   uint16_t base_color[8];
   Quaternion hand_wrist_q;
   bool hand_wrist_present;
+  bool hand_relative_rotation;
+  bool cube_relative_rotation;
   uint16_t hand_wrist_color;
   uint8_t sensor_count = 0;
 
   FrameInput()
     : hand_wrist_q(),
       hand_wrist_present(false),
+      hand_relative_rotation(true),
+      cube_relative_rotation(false),
       hand_wrist_color(TFT_RED),
       sensor_count(0) {
     for (uint8_t i = 0; i < 8; ++i) {
       sensor_q[i] = Quaternion();
+      hand_sensor_q[i] = Quaternion();
       present[i] = false;
       base_color[i] = TFT_LIGHTGREY;
     }
@@ -260,12 +266,15 @@ private:
 
     for (uint8_t finger = 0; finger < 5; ++finger) {
       const uint8_t sensorIdx = (uint8_t)(finger + 1u);
-      Quaternion qRel = Quaternion();
+      Quaternion qPose = Quaternion();
       if (in.present[sensorIdx]) {
-        qRel = Quaternion::mul(qWrist.inverseUnit(), in.sensor_q[sensorIdx]);
-        qRel.normalizeInPlace();
+        qPose = in.hand_sensor_q[sensorIdx];
+        if (in.hand_relative_rotation) {
+          qPose = Quaternion::mul(qWrist.inverseUnit(), qPose);
+        }
+        qPose.normalizeInPlace();
       }
-      Vec3 dir = rotate(qRel, baseDir[finger]);
+      Vec3 dir = rotate(qPose, baseDir[finger]);
       const float norm = sqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
       if (norm > 0.0001f) {
         dir.x /= norm; dir.y /= norm; dir.z /= norm;
@@ -348,7 +357,12 @@ private:
 
         if (idx < in.sensor_count && in.present[idx]) {
           const uint16_t col = colorForSensor(in, idx, flashActive);
-          drawCubeWire(cx, cy + 3, half, in.sensor_q[idx], col);
+          Quaternion qDraw = in.sensor_q[idx];
+          if (in.cube_relative_rotation && idx >= 1 && idx <= 5 && in.hand_wrist_present) {
+            qDraw = Quaternion::mul(in.hand_wrist_q.inverseUnit(), qDraw);
+            qDraw.normalizeInPlace();
+          }
+          drawCubeWire(cx, cy + 3, half, qDraw, col);
           if (flashActive && blinkOn && (_flashMask & (1u << idx))) {
             drawTipBlink(cx, cy + 3, _flashColor);
           }
