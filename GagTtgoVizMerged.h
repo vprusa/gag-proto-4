@@ -191,7 +191,6 @@ private:
       case 4: return "R";
       case 5: return "L";
       case 6: return "W1";
-      case 7: return "W2";
       default: return "-";
     }
   }
@@ -367,8 +366,6 @@ private:
           if (flashActive && blinkOn && (_flashMask & (1u << idx))) {
             drawTipBlink(cx, cy + 3, _flashColor);
           }
-        } else if (idx == maxCells - 1) {
-          _tft->drawFastHLine(cx - 6, cy + 3, 12, TFT_DARKGREY);
         }
       }
     }

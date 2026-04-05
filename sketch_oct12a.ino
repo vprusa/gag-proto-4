@@ -213,14 +213,13 @@ struct Vec3;
 
 #define GAG_PRIMARY_WRIST_SENSOR_MPU9250 0
 #define GAG_PRIMARY_WRIST_SENSOR_GY511 1
-#define GAG_PRIMARY_WRIST_SENSOR_GY25 2
 #ifndef GAG_PRIMARY_WRIST_SENSOR
 #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 // #define GAG_PRIMARY_WRIST_SENSOR GAG_PRIMARY_WRIST_SENSOR_MPU9250
 #endif
 
-#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY25)
-#error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_MPU9250, GAG_PRIMARY_WRIST_SENSOR_GY511, or GAG_PRIMARY_WRIST_SENSOR_GY25"
+#if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
+#error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_MPU9250 or GAG_PRIMARY_WRIST_SENSOR_GY511"
 #endif
 
 // =====================
@@ -264,24 +263,17 @@ enum SensorIndex : uint8_t {
   SENSOR_LITTLE = 4,
   SENSOR_WRIST_AUX = 5,
   SENSOR_WRIST = 6,
-  SENSOR_WRIST_GY25 = 7,
-  SENSOR_COUNT_ALL = 8,
+  SENSOR_COUNT_ALL = 7,
   SENSOR_COUNT_FINGERS = 5,
   SENSOR_COUNT_HAND = 6,
 };
 
 static const uint8_t CH_MPU9250 = 1;
 static const uint8_t CH_GY511 = 5;
-static const uint8_t CH_GY25 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
-// thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250, wrist GY25.
-// GY-511 and GY25 wrist sensors are swapped across channels 5 and 2; little still shares the old channel 5 slot while disabled.
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY511, CH_MPU9250, CH_GY25 };
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 7, 5, 0, CH_MPU9250, CH_GY511};
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 7, 5, 0, CH_MPU9250, CH_GY511};
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { CH_GY25, 3, 4, 0, 5, 7, CH_MPU9250, CH_GY511};
-// static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = {0, 3, 4, 7, 5, CH_GY511};
+// thumb, index, middle, ring, little, wrist aux GY-511, wrist MPU9250.
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY511, CH_MPU9250 };
 
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
@@ -292,7 +284,6 @@ static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   false,  // little
   true,   // wrist aux GY-511
   true,   // wrist MPU9250
-  true,   // wrist GY25
 };
 
 static const uint8_t FINGER_MAP[5] = { SENSOR_THUMB, SENSOR_INDEX, SENSOR_MIDDLE, SENSOR_RING, SENSOR_LITTLE };
@@ -318,7 +309,7 @@ static uint32_t g_restartButtonLastTriggerMs = 0;
 #if GAG_ENABLE_VIBRATION
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27, -1 };
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27 };
 static const bool MOTOR_ACTIVE_HIGH = true;
 struct MotorState {
   bool active = false;
@@ -343,8 +334,7 @@ static const uint16_t SENSOR_COLORS[SENSOR_COUNT_ALL] = {
   TFT_MAGENTA,  // ring
   TFT_ORANGE,   // little
   TFT_BLUE,     // wrist aux GY-511
-  TFT_RED,      // wrist MPU9250
-  TFT_WHITE     // wrist GY25
+  TFT_RED       // wrist MPU9250
 };
 
 // =====================
@@ -494,7 +484,6 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 },                  // little
   { -24, 2376, 2781, 0, 0, 0 },          // wrist aux (accel-only used in this sketch)
   { 2840, 4096, 6144, -144, 39, -22 },    // wrist MPU9250
-  { 0, 0, 0, 0, 0, 0 },                   // wrist GY25
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -516,7 +505,6 @@ static const char* SENSOR_OFFSET_LABELS[SENSOR_COUNT_ALL] = {
   "little",
   "wrist aux (accel-only used in this sketch)",
   "wrist MPU9250",
-  "wrist GY25",
 };
 
 // Default per-sensor mounting compensation applied in the sensor's local/body
@@ -536,7 +524,6 @@ static const gag::Quaternion DEFAULT_SENSOR_ROTATION[SENSOR_COUNT_ALL] = {
   gag::Quaternion::mul(
     gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, 180.0f),
     gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, 90.0f)),
-  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
 };
 
 static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
@@ -547,7 +534,6 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),                                                      // little
   gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist aux GY-511
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
-  gag::Quaternion(),                                                      // wrist GY25
 };
 
 // =====================
@@ -933,7 +919,7 @@ static void printFifoCapabilityReportForSensor(uint8_t sensorIdx) {
 
   const char* sensorType = (sensorIdx == SENSOR_WRIST)
                              ? "MPU9250-class wrist IMU"
-                             : ((sensorIdx == SENSOR_WRIST_GY25) ? "GY25/MPU6050-class wrist IMU" : "MPU6050-class finger IMU");
+                             : "MPU6050-class finger IMU";
   Serial.printf("FIFO sensor=%u label=%s type=%s addr=0x%02X who_am_i=0x%02X channel=%u\n",
                 (unsigned)sensorIdx,
                 SENSOR_OFFSET_LABELS[sensorIdx],
@@ -1120,8 +1106,7 @@ static inline uint8_t sensorToVizSlot(uint8_t sensorIdx) {
     case SENSOR_RING: return 4;
     case SENSOR_LITTLE: return 5;
     case SENSOR_WRIST_AUX: return 6;
-    case SENSOR_WRIST_GY25: return 7;
-    default: return 7;
+    default: return 6;
   }
 }
 
@@ -1378,16 +1363,10 @@ static gag::Quaternion applyWristPivotRotationCorrection(uint8_t sensorIdx, cons
 static uint8_t selectedWristQuaternionPhysicalSensor() {
 #if GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_GY511
   if (physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX)) return SENSOR_WRIST_AUX;
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST)) return SENSOR_WRIST;
-  return SENSOR_WRIST_GY25;
-#elif GAG_PRIMARY_WRIST_SENSOR == GAG_PRIMARY_WRIST_SENSOR_GY25
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST_GY25)) return SENSOR_WRIST_GY25;
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST)) return SENSOR_WRIST;
-  return SENSOR_WRIST_AUX;
+  return SENSOR_WRIST;
 #else
   if (physicalSensorQuaternionAvailable(SENSOR_WRIST)) return SENSOR_WRIST;
-  if (physicalSensorQuaternionAvailable(SENSOR_WRIST_AUX)) return SENSOR_WRIST_AUX;
-  return SENSOR_WRIST_GY25;
+  return SENSOR_WRIST_AUX;
 #endif
 }
 
