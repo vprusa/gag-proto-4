@@ -123,7 +123,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_VIZ_CUBES_RELATIVE_ROTATION
-#define GAG_VIZ_CUBES_RELATIVE_ROTATION 0
+#define GAG_VIZ_CUBES_RELATIVE_ROTATION 1
 #endif
 
 #ifndef GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX
@@ -2039,7 +2039,8 @@ static void addPoseGesture(const char* name,
                            float thresholdDeg,
                            uint32_t cooldownMs,
                            uint32_t maxTimeMs,
-                           const gag::GestureAction& action) {
+                           const gag::GestureAction& action,
+                           bool relativeToWrist = false) {
   gag::GestureDef g;
   strncpy(g.name, name, sizeof(g.name) - 1);
   strncpy(g.command, command, sizeof(g.command) - 1);
@@ -2047,9 +2048,13 @@ static void addPoseGesture(const char* name,
   g.threshold_rad = deg2rad(thresholdDeg);
   g.recognition_delay_ms = cooldownMs;
   g.max_time_ms = maxTimeMs;
-  g.relative = false;
+  g.relative = relativeToWrist;
   g.active = true;
   g.action = action;
+  if (relativeToWrist) {
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
+  }
   g.perSensor[(uint8_t)sensor].len = 2;
   g.perSensor[(uint8_t)sensor].q[0] = target;
   g.perSensor[(uint8_t)sensor].q[1] = target;
@@ -2089,7 +2094,7 @@ static void installDefaultGestures() {
     addPoseGesture("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   18.0f, 320, 900, a);
+                   18.0f, 320, 900, a, true);
   }
 
   // Ring bend -> right click.
