@@ -122,7 +122,7 @@ struct Vec3;
 #endif
 
 #ifndef GAG_VIZ_CUBES_RELATIVE_ROTATION
-#define GAG_VIZ_CUBES_RELATIVE_ROTATION 1
+#define GAG_VIZ_CUBES_RELATIVE_ROTATION 0
 #endif
 
 #ifndef GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX
@@ -483,7 +483,8 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 },                  // ring
   { 0, 0, 0, 0, 0, 0 },                  // little
   { -24, 2376, 2781, 0, 0, 0 },          // wrist aux (accel-only used in this sketch)
-  { -2209, -223, 2590, -145, 38, -19 },  // wrist MPU9250
+  // { -2209, -223, 2590, -145, 38, -19 },  // wrist MPU9250
+  {2840, 4096, 6144, -144, 39, -22 },
 };
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
@@ -597,6 +598,9 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f),    // ring
   gag::Quaternion(1.00000000f, 0.00000000f, 0.00000000f, 0.00000000f),    // little
   gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist aux (accel-only used in this sketch)
+  // gag::Quaternion(0.30845252f, 
+  
+  0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
 };
 
