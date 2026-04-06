@@ -122,12 +122,12 @@ struct Vec3;
 #endif
 
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
-#define GAG_HW_CALIBRATION_REQUIRED_SAMPLES 1000
+#define GAG_HW_CALIBRATION_REQUIRED_SAMPLES 500
 #endif
 
 #ifndef GAG_HW_CALIBRATION_SAMPLE_DELAY_MS
 // #define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 5
-#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 50
+#define GAG_HW_CALIBRATION_SAMPLE_DELAY_MS 100
 #endif
 
 #ifndef GAG_HW_CALIBRATION_APPLY_UNSTABLE
@@ -150,12 +150,16 @@ struct Vec3;
 #define GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG 0
 #endif
 
+#ifndef GAG_ENABLE_RECOGNITION
+#define GAG_ENABLE_RECOGNITION 0
+#endif
+
 #ifndef GAG_VIZ_HAND_RELATIVE_ROTATION
 #define GAG_VIZ_HAND_RELATIVE_ROTATION 1
 #endif
 
 #ifndef GAG_VIZ_CUBES_RELATIVE_ROTATION
-#define GAG_VIZ_CUBES_RELATIVE_ROTATION 1
+#define GAG_VIZ_CUBES_RELATIVE_ROTATION 0
 #endif
 
 #ifndef GAG_APPLY_GY511_WRIST_PIVOT_ROTATION_FIX
@@ -519,8 +523,12 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 },                  // ring
   { 0, 0, 0, 0, 0, 0 },                  // little
   // { 0, 0, 0, 0, 0, 0 },                  // wrist GY25
-  { -1285, -3177, 2002, 163, -59, -13 }, // wrist GY25
-    // { -3, 345, -357, -1, -1, 57 }, // wrist GY25
+  // { -1285, -3177, 2002, 163, -59, -13 }, // wrist GY25
+  // { -145, 243, -380, -1, -1, 58 }, // wrist GY25
+  { -1357, -3550, 2410, 162, -59, -13 }, // wrist GY25
+// { 22, 921, -794, 0, 0, 57 }, // wrist GY25
+  // { 21, 919, -795, 0, 0, 57 }, // wrist GY25
+  // { -3, 345, -357, -1, -1, 57 }, // wrist GY25
   { 2840, 4096, 6144, -144, 39, -22 },   // wrist MPU9250
   { -24, 2376, 2781, 0, 0, 0 },          // wrist GY-511 (accel-only used in this sketch)
 };
@@ -576,7 +584,9 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(),                                                      // little
   // gag::Quaternion(),                                                      // wrist GY25
   // gag::Quaternion(0.37982515f, 0.60986483f, 0.05722475f, -0.69319785f),
-    gag::Quaternion(0.49651864f, 0.57824373f, 0.15302165f, -0.62903732f), // wrist GY25
+    // gag::Quaternion(0.49651864f, 0.57824373f, 0.15302165f, -0.62903732f), // wrist GY25
+  gag::Quaternion(0.45700318f, -0.23116538f, 0.66169173f, -0.54760826f), // wrist GY25
+
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
   gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist GY-511
 };
@@ -2411,9 +2421,11 @@ static void initializeGloveRuntime(bool coldBootLog) {
   printRotationOffsetsAtBoot();
   autoCaptureSoftwareNeutralOffsets();
 
+#if GAG_ENABLE_RECOGNITION
   g_recognizer.begin(Serial);
   g_recognizer.setOnRecognized(onGestureRecognized);
   installDefaultGestures();
+#endif
 
   g_viz.pushLog("READY");
 }
@@ -2465,7 +2477,9 @@ void loop() {
   updateWristMagYaw();
   updateGY511();
 
+#if GAG_ENABLE_RECOGNITION
   feedRecognizerFromCurrentPose();
+#endif
   updateVibrations();
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
