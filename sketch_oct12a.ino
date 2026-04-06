@@ -57,12 +57,18 @@ struct Vec3;
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-
-#if __has_include(<BleMouse.h>)
 #include <BleMouse.h>
 #define GAG_HAVE_BLE_MOUSE 1
+#define GAG_BLE_MOUSE_BACKEND_NIMBLE 1
+
+// BLE mouse backend: require the NimBLE-based mouse wrapper plus NimBLE-Arduino.
+#if __has_include(<BleMouse.h>) && __has_include(<NimBLEDevice.h>)
+// #include <BleMouse.h>
+#define GAG_HAVE_BLE_MOUSE 1
+#define GAG_BLE_MOUSE_BACKEND_NIMBLE 1
 #else
-#define GAG_HAVE_BLE_MOUSE 0
+// #define GAG_HAVE_BLE_MOUSE 0
+// #define GAG_BLE_MOUSE_BACKEND_NIMBLE 0
 #endif
 
 #include "config.h"
@@ -1871,7 +1877,7 @@ static void maybeHandleTtgoRightButtonMouseToggle() {
   Serial.printf("Mouse emulation %s.\n", g_mouseEmulationEnabled ? "enabled" : "disabled");
   g_viz.pushLog(g_mouseEmulationEnabled ? "MOUSE ON" : "MOUSE OFF");
 #else
-  Serial.println("BLE mouse support is disabled at compile time.");
+  Serial.println("NimBLE mouse support is unavailable at compile time.");
 #endif
 }
 
@@ -2270,7 +2276,10 @@ void setup() {
   initializeGloveRuntime(true);
 
 #if GAG_ENABLE_BLE_MOUSE
+  Serial.println("Starting ESP32-NimBLE-Mouse backend.");
   g_bleMouse.begin();
+#else
+  Serial.println("ESP32-NimBLE-Mouse backend not available. Install NimBLE-Arduino and ESP32-NimBLE-Mouse.");
 #endif
   initMotors();
   // runStartupVibrationTest();
