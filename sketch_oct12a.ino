@@ -1864,11 +1864,14 @@ static bool consumeTtgoRightButtonPress() {
 }
 
 static void maybeHandleTtgoRightButtonMouseToggle() {
-#if GAG_ENABLE_BLE_MOUSE
   if (!consumeTtgoRightButtonPress()) return;
+  Serial.println("TTGO right button press detected.");
+#if GAG_ENABLE_BLE_MOUSE
   g_mouseEmulationEnabled = !g_mouseEmulationEnabled;
   Serial.printf("Mouse emulation %s.\n", g_mouseEmulationEnabled ? "enabled" : "disabled");
   g_viz.pushLog(g_mouseEmulationEnabled ? "MOUSE ON" : "MOUSE OFF");
+#else
+  Serial.println("BLE mouse support is disabled at compile time.");
 #endif
 }
 
