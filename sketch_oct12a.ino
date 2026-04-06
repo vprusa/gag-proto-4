@@ -59,17 +59,6 @@ struct Vec3;
 #endif
 #include <BleMouse.h>
 #define GAG_HAVE_BLE_MOUSE 1
-#define GAG_BLE_MOUSE_BACKEND_NIMBLE 1
-
-// BLE mouse backend: require the NimBLE-based mouse wrapper plus NimBLE-Arduino.
-#if __has_include(<BleMouse.h>) && __has_include(<NimBLEDevice.h>)
-// #include <BleMouse.h>
-#define GAG_HAVE_BLE_MOUSE 1
-#define GAG_BLE_MOUSE_BACKEND_NIMBLE 1
-#else
-// #define GAG_HAVE_BLE_MOUSE 0
-// #define GAG_BLE_MOUSE_BACKEND_NIMBLE 0
-#endif
 
 #include "config.h"
 
@@ -98,10 +87,6 @@ static bool readTtgoRightButtonPressed() {
   return GAG_TTGO_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
 }
 
-static bool readRestartButtonPressed() {
-  const int raw = digitalRead(GAG_RESTART_BUTTON_PIN);
-  return GAG_RESTART_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
-}
 
 // =====================
 // Sensor topology
@@ -154,8 +139,6 @@ static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static bool g_rightButtonPrevPressed = false;
 static uint32_t g_rightButtonLastTriggerMs = 0;
 static bool g_mouseEmulationEnabled = false;
-static bool g_restartButtonPrevPressed = false;
-static uint32_t g_restartButtonLastTriggerMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -1877,7 +1860,7 @@ static void maybeHandleTtgoRightButtonMouseToggle() {
   Serial.printf("Mouse emulation %s.\n", g_mouseEmulationEnabled ? "enabled" : "disabled");
   g_viz.pushLog(g_mouseEmulationEnabled ? "MOUSE ON" : "MOUSE OFF");
 #else
-  Serial.println("NimBLE mouse support is unavailable at compile time.");
+  Serial.println("BLE mouse support is unavailable at compile time.");
 #endif
 }
 
@@ -2246,20 +2229,6 @@ static void initializeGloveRuntime(bool coldBootLog) {
   g_viz.pushLog("READY");
 }
 
-static void maybeHandleRestartButton() {
-  const bool pressed = readRestartButtonPressed();
-  const uint32_t now = millis();
-  const bool risingEdge = pressed && !g_restartButtonPrevPressed;
-  g_restartButtonPrevPressed = pressed;
-  if (!risingEdge) return;
-  if ((uint32_t)(now - g_restartButtonLastTriggerMs) < (uint32_t)GAG_RESTART_BUTTON_DEBOUNCE_MS) return;
-  g_restartButtonLastTriggerMs = now;
-
-  Serial.println("GPIO0 restart requested.");
-  initializeGloveRuntime(false);
-}
-
-
 // =====================
 // Setup / loop
 // =====================
@@ -2268,26 +2237,22 @@ void setup() {
   delay(100);
   pinMode(GAG_TTGO_RIGHT_BUTTON_PIN, INPUT);
   g_rightButtonPrevPressed = readTtgoRightButtonPressed();
-  pinMode(GAG_RESTART_BUTTON_PIN, INPUT_PULLUP);
-  g_restartButtonPrevPressed = readRestartButtonPressed();
 
   tft.init();
   tft.setRotation(GAG_TFT_ROTATION);  // TFT_eSPI rotates the whole UI, including text primitives.
   initializeGloveRuntime(true);
 
 #if GAG_ENABLE_BLE_MOUSE
-  Serial.println("Starting ESP32-NimBLE-Mouse backend.");
+  Serial.println("Starting BLE mouse backend.");
   g_bleMouse.begin();
 #else
-  Serial.println("ESP32-NimBLE-Mouse backend not available. Install NimBLE-Arduino and ESP32-NimBLE-Mouse.");
+  Serial.println("BLE mouse backend not available. Install BleMouse.");
 #endif
   initMotors();
   // runStartupVibrationTest();
 }
 
 void loop() {
-  maybeHandleRestartButton();
-
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     updateOneIMU(i);
   }
