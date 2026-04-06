@@ -993,7 +993,13 @@ static void updateContinuousThumbMouseControl() {
   const float targetDx = rawTargetDy;
   const float targetDy = -rawTargetDx;
   const float filterAlpha = 0.22f;
-  const float maxStepPerLoop = 16.0f;
+  const float normalMaxStepPerLoop = 16.0f;
+  const float fastMaxStepPerLoop = 64.0f;
+  const float fastTierThreshold = 0.88f;
+  const float controlMagnitude = fmaxf(fabsf(targetDx), fabsf(targetDy));
+  const float maxStepPerLoop = (controlMagnitude >= fastTierThreshold)
+                                 ? fastMaxStepPerLoop
+                                 : normalMaxStepPerLoop;
 
   g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
   g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
