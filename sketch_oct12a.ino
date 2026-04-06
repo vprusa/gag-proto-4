@@ -983,8 +983,8 @@ static void updateContinuousThumbMouseControl() {
   float thumbZDeg = 0.0f;
   quaternionToThumbControlEulerDeg(correctedQuaternionForPhysicalSensor(SENSOR_THUMB), thumbXDeg, thumbZDeg);
 
-  const float rawTargetDx = applyThumbMouseResponse(thumbXDeg);
-  const float rawTargetDy = applyThumbMouseResponse(thumbZDeg);
+  const float rawTargetDx = applyThumbMouseResponse(-thumbXDeg);
+  const float rawTargetDy = applyThumbMouseResponse(-thumbZDeg);
 
   // Align thumb control axes with screen axes.
   // Observed mapping was rotated by 90 degrees: thumb down->mouse left,
@@ -993,7 +993,7 @@ static void updateContinuousThumbMouseControl() {
   const float targetDx = rawTargetDy;
   const float targetDy = -rawTargetDx;
   const float filterAlpha = 0.22f;
-  const float maxStepPerLoop = 12.0f; // was 8
+  const float maxStepPerLoop = 16.0f;
 
   g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
   g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
