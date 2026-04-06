@@ -89,8 +89,40 @@ struct Vec3;
 #define GAG_MEASURE_HW_OFFSETS_AT_BOOT 0
 #endif
 
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_THUMB
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_THUMB 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_INDEX
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_INDEX 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_MIDDLE
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_MIDDLE 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_RING
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_RING 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_LITTLE
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_LITTLE 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY25
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY25 1
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_MPU9250
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_MPU9250 0
+#endif
+
+#ifndef GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY511
+#define GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY511 0
+#endif
+
 #ifndef GAG_HW_CALIBRATION_REQUIRED_SAMPLES
-#define GAG_HW_CALIBRATION_REQUIRED_SAMPLES 200
+#define GAG_HW_CALIBRATION_REQUIRED_SAMPLES 1000
 #endif
 
 #ifndef GAG_HW_CALIBRATION_SAMPLE_DELAY_MS
@@ -488,6 +520,7 @@ static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
   { 0, 0, 0, 0, 0, 0 },                  // little
   // { 0, 0, 0, 0, 0, 0 },                  // wrist GY25
   { -1285, -3177, 2002, 163, -59, -13 }, // wrist GY25
+    // { -3, 345, -357, -1, -1, 57 }, // wrist GY25
   { 2840, 4096, 6144, -144, 39, -22 },   // wrist MPU9250
   { -24, 2376, 2781, 0, 0, 0 },          // wrist GY-511 (accel-only used in this sketch)
 };
@@ -1773,6 +1806,31 @@ static bool isSensorAvailableForOffsetMeasurement(uint8_t sensorIdx) {
   return hasConfiguredImuChannel(sensorIdx);
 }
 
+static bool hardwareCalibrationEnabledForSensor(uint8_t sensorIdx) {
+#if GAG_MEASURE_HW_OFFSETS_AT_BOOT
+  return sensorIdx < SENSOR_COUNT_ALL;
+#else
+  switch (sensorIdx) {
+    case SENSOR_THUMB: return GAG_MEASURE_HW_OFFSETS_SENSOR_THUMB;
+    case SENSOR_INDEX: return GAG_MEASURE_HW_OFFSETS_SENSOR_INDEX;
+    case SENSOR_MIDDLE: return GAG_MEASURE_HW_OFFSETS_SENSOR_MIDDLE;
+    case SENSOR_RING: return GAG_MEASURE_HW_OFFSETS_SENSOR_RING;
+    case SENSOR_LITTLE: return GAG_MEASURE_HW_OFFSETS_SENSOR_LITTLE;
+    case SENSOR_WRIST_GY25: return GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY25;
+    case SENSOR_WRIST_MPU9250: return GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_MPU9250;
+    case SENSOR_WRIST_GY511: return GAG_MEASURE_HW_OFFSETS_SENSOR_WRIST_GY511;
+    default: return false;
+  }
+#endif
+}
+
+static bool anyHardwareCalibrationEnabled() {
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (hardwareCalibrationEnabledForSensor(s)) return true;
+  }
+  return false;
+}
+
 static void printHardwareOffsetsArray() {
   Serial.println("static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {");
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
@@ -1815,8 +1873,9 @@ static void printHardwareCalibrationStats(uint8_t sensorIdx,
 }
 
 static void applyCurrentHardwareOffsetsToInitializedSensors() {
-  for (uint8_t idx = SENSOR_THUMB; idx <= SENSOR_LITTLE; ++idx) {
-    if (!isSensorEnabled(idx) || !g_sensorInitOk[idx]) continue;
+  for (uint8_t idx = 0; idx < SENSOR_COUNT_ALL; ++idx) {
+    if (!isSensorEnabled(idx) || !isMpuBackedSensor(idx) || !g_sensorInitOk[idx]) continue;
+    if (usesDirectMpuRegisterAccess(idx)) continue;
     const gag::offsets::HwOffset6 hw = g_offsets.hardware(idx);
     mpu[idx].setXAccelOffset(hw.ax);
     mpu[idx].setYAccelOffset(hw.ay);
@@ -1828,13 +1887,19 @@ static void applyCurrentHardwareOffsetsToInitializedSensors() {
 }
 
 static void measureHardwareOffsetsAtBoot() {
-#if GAG_MEASURE_HW_OFFSETS_AT_BOOT
+  if (!anyHardwareCalibrationEnabled()) return;
   gag::offsets::StableWindowConfig cfg;
   cfg.required_samples = GAG_HW_CALIBRATION_REQUIRED_SAMPLES;
   Serial.printf("HW calib start samples=%u delay_ms=%u\n",
                 (unsigned)cfg.required_samples,
                 (unsigned)GAG_HW_CALIBRATION_SAMPLE_DELAY_MS);
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!hardwareCalibrationEnabledForSensor(s)) {
+      Serial.printf("HW calib sensor=%u label=%s skipped disabled\n",
+                    (unsigned)s,
+                    SENSOR_OFFSET_LABELS[s]);
+      continue;
+    }
     if (!isSensorAvailableForOffsetMeasurement(s)) {
       Serial.printf("HW calib sensor=%u label=%s skipped unavailable\n",
                     (unsigned)s,
@@ -1871,7 +1936,6 @@ static void measureHardwareOffsetsAtBoot() {
   }
   applyCurrentHardwareOffsetsToInitializedSensors();
   printHardwareOffsetsArray();
-#endif
 }
 
 // =====================
