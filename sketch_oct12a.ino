@@ -954,16 +954,15 @@ static float applyThumbMouseResponse(float angleDeg) {
 static void quaternionToThumbControlEulerDeg(const gag::Quaternion& qIn, float& xDeg, float& zDeg) {
   gag::Quaternion q = qIn;
   q.normalizeInPlace();
-  const float sinr_cosp = 2.0f * (q.w * q.x + q.y * q.z);
-  const float cosr_cosp = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
-  const float roll = atan2f(sinr_cosp, cosr_cosp);
 
-  const float siny_cosp = 2.0f * (q.w * q.z + q.x * q.y);
-  const float cosy_cosp = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
-  const float yaw = atan2f(siny_cosp, cosy_cosp);
-
-  xDeg = rad2deg(roll);
-  zDeg = rad2deg(yaw);
+  // Use the quaternion's direct x/z channels instead of Euler roll/yaw.
+  // The old discrete thumb gestures were defined as pure X-axis and Z-axis
+  // rotations around the neutral thumb pose, so this keeps the continuous
+  // mapping aligned with that same control frame and avoids cross-axis mixing.
+  const float qx = q.x < -1.0f ? -1.0f : (q.x > 1.0f ? 1.0f : q.x);
+  const float qz = q.z < -1.0f ? -1.0f : (q.z > 1.0f ? 1.0f : q.z);
+  xDeg = rad2deg(2.0f * asinf(qx));
+  zDeg = rad2deg(2.0f * asinf(qz));
 }
 
 static void resetContinuousThumbMouseControl() {
@@ -984,10 +983,17 @@ static void updateContinuousThumbMouseControl() {
   float thumbZDeg = 0.0f;
   quaternionToThumbControlEulerDeg(correctedQuaternionForPhysicalSensor(SENSOR_THUMB), thumbXDeg, thumbZDeg);
 
-  const float targetDx = applyThumbMouseResponse(-thumbXDeg);
-  const float targetDy = applyThumbMouseResponse(thumbZDeg);
+  const float rawTargetDx = applyThumbMouseResponse(thumbXDeg);
+  const float rawTargetDy = applyThumbMouseResponse(thumbZDeg);
+
+  // Align thumb control axes with screen axes.
+  // Observed mapping was rotated by 90 degrees: thumb down->mouse left,
+  // thumb left->mouse up, thumb up->mouse right, thumb right->mouse down.
+  // Rotate the control vector 90 degrees CCW in screen coordinates.
+  const float targetDx = rawTargetDy;
+  const float targetDy = -rawTargetDx;
   const float filterAlpha = 0.22f;
-  const float maxStepPerLoop = 4.0f;
+  const float maxStepPerLoop = 12.0f; // was 8
 
   g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
   g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
