@@ -87,13 +87,9 @@ struct Vec3;
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
 static uint8_t g_wristMpuAddr = MPU9250_ADDR_DEFAULT;
 
-static bool readTtgoLeftButtonPressed() {
-#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
-  const int raw = digitalRead(GAG_TTGO_LEFT_BUTTON_PIN);
+static bool readTtgoRightButtonPressed() {
+  const int raw = digitalRead(GAG_TTGO_RIGHT_BUTTON_PIN);
   return GAG_TTGO_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
-#else
-  return false;
-#endif
 }
 
 static bool readRestartButtonPressed() {
@@ -149,8 +145,9 @@ static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
 static uint8_t g_serialQuatLogSensorMask = 0;
 static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
-static bool g_leftButtonPrevPressed = false;
-static uint32_t g_leftButtonLastTriggerMs = 0;
+static bool g_rightButtonPrevPressed = false;
+static uint32_t g_rightButtonLastTriggerMs = 0;
+static bool g_mouseEmulationEnabled = false;
 static bool g_restartButtonPrevPressed = false;
 static uint32_t g_restartButtonLastTriggerMs = 0;
 
@@ -920,6 +917,7 @@ static void runStartupVibrationTest() {}
 // =====================
 static void execMouseAction(const gag::MouseAction& mouse) {
 #if GAG_ENABLE_BLE_MOUSE
+  if (!g_mouseEmulationEnabled) return;
   if (!g_bleMouse.isConnected()) return;
   switch (mouse.type) {
     case gag::MouseActionType::MOVE:
@@ -1826,6 +1824,18 @@ static void printQuaternionWxyz(const char* prefix, const gag::Quaternion& qIn) 
   Serial.printf("%s{ w=%.5f, x=%.5f, y=%.5f, z=%.5f }\n", prefix, q.w, q.x, q.y, q.z);
 }
 
+static void printMinorRotationOffsetArray(const gag::Quaternion* offsets, const char* title) {
+  if (title && title[0]) Serial.println(title);
+  Serial.println("static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    gag::Quaternion q = offsets[s];
+    q.normalizeInPlace();
+    Serial.printf("  gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff), // %s\n",
+                  q.w, q.x, q.y, q.z, SENSOR_OFFSET_LABELS[s]);
+  }
+  Serial.println("};");
+}
+
 static void maybePrintMinorRotationOffsetCandidates() {
 #if GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES
   const uint32_t now = millis();
@@ -1842,44 +1852,23 @@ static void maybePrintMinorRotationOffsetCandidates() {
 #endif
 }
 
-static void printMinorRotationOffsetArray(const gag::Quaternion* offsets, const char* title) {
-  if (title && title[0]) Serial.println(title);
-  Serial.println("static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {");
-  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    gag::Quaternion q = offsets[s];
-    q.normalizeInPlace();
-    Serial.printf("  gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff), // %s\n",
-                  q.w, q.x, q.y, q.z, SENSOR_OFFSET_LABELS[s]);
-  }
-  Serial.println("};");
-}
-
-static void captureMinorRotationOffsetsFromCurrentPose(uint8_t samples = 16) {
-  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    if (!physicalSensorQuaternionAvailable(s)) continue;
-    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, false, samples);
-    g_minorRotationOffset[s] = computeMinorRotationCompensation(qAvg, gag::Quaternion());
-  }
-}
-
-static void maybeHandleLeftButtonMinorRotationCapture() {
-#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
-  const bool pressed = readTtgoLeftButtonPressed();
+static bool consumeTtgoRightButtonPress() {
+  const bool pressed = readTtgoRightButtonPressed();
   const uint32_t now = millis();
-  const bool risingEdge = pressed && !g_leftButtonPrevPressed;
-  g_leftButtonPrevPressed = pressed;
-  if (!risingEdge) return;
-  if ((uint32_t)(now - g_leftButtonLastTriggerMs) < (uint32_t)GAG_TTGO_BUTTON_DEBOUNCE_MS) return;
-  g_leftButtonLastTriggerMs = now;
+  const bool risingEdge = pressed && !g_rightButtonPrevPressed;
+  g_rightButtonPrevPressed = pressed;
+  if (!risingEdge) return false;
+  if (((uint32_t)(now - g_rightButtonLastTriggerMs)) < (uint32_t)GAG_TTGO_BUTTON_DEBOUNCE_MS) return false;
+  g_rightButtonLastTriggerMs = now;
+  return true;
+}
 
-  gag::Quaternion previousOffsets[SENSOR_COUNT_ALL];
-  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) previousOffsets[s] = g_minorRotationOffset[s];
-
-  captureMinorRotationOffsetsFromCurrentPose(16);
-  Serial.println("Left button capture: current pose set as ideal for minor rotation offsets.");
-  printMinorRotationOffsetArray(previousOffsets, "Previous g_minorRotationOffset:");
-  printMinorRotationOffsetArray(g_minorRotationOffset, "Updated g_minorRotationOffset:");
-  printRotationOffsetsAtBoot();
+static void maybeHandleTtgoRightButtonMouseToggle() {
+#if GAG_ENABLE_BLE_MOUSE
+  if (!consumeTtgoRightButtonPress()) return;
+  g_mouseEmulationEnabled = !g_mouseEmulationEnabled;
+  Serial.printf("Mouse emulation %s.\n", g_mouseEmulationEnabled ? "enabled" : "disabled");
+  g_viz.pushLog(g_mouseEmulationEnabled ? "MOUSE ON" : "MOUSE OFF");
 #endif
 }
 
@@ -2172,6 +2161,7 @@ static void resetFusionState() {
   gy511LastT = 0;
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
+  g_mouseEmulationEnabled = false;
 }
 
 static void initializeGloveRuntime(bool coldBootLog) {
@@ -2241,6 +2231,9 @@ static void initializeGloveRuntime(bool coldBootLog) {
   installDefaultGestures();
 #endif
 
+#if GAG_ENABLE_BLE_MOUSE
+  g_viz.pushLog("MOUSE OFF");
+#endif
   g_viz.pushLog("READY");
 }
 
@@ -2264,10 +2257,8 @@ static void maybeHandleRestartButton() {
 void setup() {
   Serial.begin(115200);
   delay(100);
-#if GAG_ENABLE_LEFT_BUTTON_MINOR_ROTATION_CAPTURE
-  pinMode(GAG_TTGO_LEFT_BUTTON_PIN, INPUT);
-  g_leftButtonPrevPressed = readTtgoLeftButtonPressed();
-#endif
+  pinMode(GAG_TTGO_RIGHT_BUTTON_PIN, INPUT);
+  g_rightButtonPrevPressed = readTtgoRightButtonPressed();
   pinMode(GAG_RESTART_BUTTON_PIN, INPUT_PULLUP);
   g_restartButtonPrevPressed = readRestartButtonPressed();
 
@@ -2297,7 +2288,7 @@ void loop() {
   updateVibrations();
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
-  maybeHandleLeftButtonMinorRotationCapture();
+  maybeHandleTtgoRightButtonMouseToggle();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);

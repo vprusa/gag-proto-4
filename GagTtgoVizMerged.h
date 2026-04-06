@@ -205,7 +205,7 @@ private:
   }
 
   void projectSkeletonPoint(const Vec3& p, int areaX, int areaY, int areaW, int areaH, int& sx, int& sy) {
-    const float cx = areaX + areaW * 0.30f;
+    const float cx = areaX + areaW * 0.50f;
     const float cy = areaY + areaH * 0.90f;
     const float scale = areaH * 0.75f / 58.0f;
     sx = (int)(cx + scale * (p.x + 0.25f * p.z));
