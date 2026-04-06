@@ -139,6 +139,10 @@ static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static bool g_rightButtonPrevPressed = false;
 static uint32_t g_rightButtonLastTriggerMs = 0;
 static bool g_mouseEmulationEnabled = false;
+static float g_thumbMouseFilteredDx = 0.0f;
+static float g_thumbMouseFilteredDy = 0.0f;
+static float g_thumbMouseResidualDx = 0.0f;
+static float g_thumbMouseResidualDy = 0.0f;
 
 // =====================
 // Optional vibration motors
@@ -929,6 +933,75 @@ static void execMouseAction(const gag::MouseAction& mouse) {
   }
 #else
   (void)mouse;
+#endif
+}
+
+static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx);
+static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx);
+
+static float applyThumbMouseResponse(float angleDeg) {
+  const float deadzoneDeg = 6.0f;
+  const float fullScaleDeg = 24.0f;
+  const float absDeg = fabsf(angleDeg);
+  if (absDeg <= deadzoneDeg) return 0.0f;
+  float t = (absDeg - deadzoneDeg) / (fullScaleDeg - deadzoneDeg);
+  if (t < 0.0f) t = 0.0f;
+  if (t > 1.0f) t = 1.0f;
+  const float curved = t * t * t;
+  return (angleDeg < 0.0f) ? -curved : curved;
+}
+
+static void quaternionToThumbControlEulerDeg(const gag::Quaternion& qIn, float& xDeg, float& zDeg) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  const float sinr_cosp = 2.0f * (q.w * q.x + q.y * q.z);
+  const float cosr_cosp = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+  const float roll = atan2f(sinr_cosp, cosr_cosp);
+
+  const float siny_cosp = 2.0f * (q.w * q.z + q.x * q.y);
+  const float cosy_cosp = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
+  const float yaw = atan2f(siny_cosp, cosy_cosp);
+
+  xDeg = rad2deg(roll);
+  zDeg = rad2deg(yaw);
+}
+
+static void resetContinuousThumbMouseControl() {
+  g_thumbMouseFilteredDx = 0.0f;
+  g_thumbMouseFilteredDy = 0.0f;
+  g_thumbMouseResidualDx = 0.0f;
+  g_thumbMouseResidualDy = 0.0f;
+}
+
+static void updateContinuousThumbMouseControl() {
+#if GAG_ENABLE_BLE_MOUSE
+  if (!g_mouseEmulationEnabled || !g_bleMouse.isConnected() || !physicalSensorQuaternionAvailable(SENSOR_THUMB)) {
+    resetContinuousThumbMouseControl();
+    return;
+  }
+
+  float thumbXDeg = 0.0f;
+  float thumbZDeg = 0.0f;
+  quaternionToThumbControlEulerDeg(correctedQuaternionForPhysicalSensor(SENSOR_THUMB), thumbXDeg, thumbZDeg);
+
+  const float targetDx = applyThumbMouseResponse(-thumbXDeg);
+  const float targetDy = applyThumbMouseResponse(thumbZDeg);
+  const float filterAlpha = 0.22f;
+  const float maxStepPerLoop = 4.0f;
+
+  g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
+  g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
+
+  const float dxFloat = g_thumbMouseFilteredDx * maxStepPerLoop + g_thumbMouseResidualDx;
+  const float dyFloat = g_thumbMouseFilteredDy * maxStepPerLoop + g_thumbMouseResidualDy;
+  const int8_t dx = (int8_t)dxFloat;
+  const int8_t dy = (int8_t)dyFloat;
+  g_thumbMouseResidualDx = dxFloat - (float)dx;
+  g_thumbMouseResidualDy = dyFloat - (float)dy;
+
+  if (dx != 0 || dy != 0) {
+    g_bleMouse.move(dx, dy, 0, 0);
+  }
 #endif
 }
 
@@ -1979,56 +2052,8 @@ static void installDefaultGestures() {
                    18.0f, 320, 900, a);
   }
 
-  // Thumb mouse movement. These are intentionally simple and depend on the
-  // software neutral offsets having zeroed the current thumb pose.
-  {
-    gag::GestureAction a;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = MouseActionType::MOVE;
-    a.mouse.dx = +12;
-    a.mouse.dy = 0;
-    addPoseGesture("thumb_move_right", "MOUSE_MOVE_RIGHT", "MR",
-                   gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -22.0f),
-                   16.0f, 180, 900, a);
-  }
-  {
-    gag::GestureAction a;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE;
-    a.mouse.dx = -12;
-    a.mouse.dy = 0;
-    addPoseGesture("thumb_move_left", "MOUSE_MOVE_LEFT", "ML",
-                   gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, +22.0f),
-                   16.0f, 180, 900, a);
-  }
-  {
-    gag::GestureAction a;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE;
-    a.mouse.dx = 0;
-    a.mouse.dy = -12;
-    addPoseGesture("thumb_move_up", "MOUSE_MOVE_UP", "MU",
-                   gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -22.0f),
-                   16.0f, 180, 900, a);
-  }
-  {
-    gag::GestureAction a;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_YELLOW;
-    a.mouse.type = gag::MouseActionType::MOVE;
-    a.mouse.dx = 0;
-    a.mouse.dy = +12;
-    addPoseGesture("thumb_move_down", "MOUSE_MOVE_DOWN", "MD",
-                   gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, 22.0f),
-                   16.0f, 180, 900, a);
-  }
+  // Thumb mouse movement now uses continuous control driven from the
+  // corrected thumb pose in updateContinuousThumbMouseControl().
 }
 
 // =====================
@@ -2154,6 +2179,7 @@ static void resetFusionState() {
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
   g_mouseEmulationEnabled = false;
+  resetContinuousThumbMouseControl();
 }
 
 static void initializeGloveRuntime(bool coldBootLog) {
@@ -2266,6 +2292,7 @@ void loop() {
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
   maybeHandleTtgoRightButtonMouseToggle();
+  updateContinuousThumbMouseControl();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
