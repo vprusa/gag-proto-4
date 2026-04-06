@@ -143,6 +143,11 @@ static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
 static float g_thumbMouseResidualDy = 0.0f;
+static float g_wristGy25RuntimeBiasDegX = 0.0f;
+static float g_wristGy25RuntimeBiasDegY = 0.0f;
+static float g_wristGy25RuntimeBiasDegZ = 0.0f;
+static uint32_t g_wristGy25StillSinceMs = 0;
+static uint32_t g_lastWristGy25BiasLogMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -1123,6 +1128,46 @@ static gag::Quaternion quatFromTwoUnitVectors(const Vec3& fromIn, const Vec3& to
   return quatFromAxisAngleRad(axis.x, axis.y, axis.z, acosf(d));
 }
 
+static bool wristGy25LooksStationary(const Vec3& accelBody,
+                                    float gxDegPerSec,
+                                    float gyDegPerSec,
+                                    float gzDegPerSec) {
+  const float accelNorm = vecNorm(accelBody);
+  const float gyroAbsMax = fmaxf(fabsf(gxDegPerSec), fmaxf(fabsf(gyDegPerSec), fabsf(gzDegPerSec)));
+  return fabsf(accelNorm - 1.0f) <= 0.08f && gyroAbsMax <= 3.0f;
+}
+
+static void updateWristGy25RuntimeBias(const Vec3& accelBody,
+                                       float gxDegPerSecRaw,
+                                       float gyDegPerSecRaw,
+                                       float gzDegPerSecRaw,
+                                       uint32_t nowMs) {
+  if (!wristGy25LooksStationary(accelBody, gxDegPerSecRaw, gyDegPerSecRaw, gzDegPerSecRaw)) {
+    g_wristGy25StillSinceMs = 0;
+    return;
+  }
+
+  if (g_wristGy25StillSinceMs == 0) {
+    g_wristGy25StillSinceMs = nowMs;
+    return;
+  }
+
+  if ((uint32_t)(nowMs - g_wristGy25StillSinceMs) < 1500UL) return;
+
+  const float adapt = 0.01f;
+  g_wristGy25RuntimeBiasDegX += (gxDegPerSecRaw - g_wristGy25RuntimeBiasDegX) * adapt;
+  g_wristGy25RuntimeBiasDegY += (gyDegPerSecRaw - g_wristGy25RuntimeBiasDegY) * adapt;
+  g_wristGy25RuntimeBiasDegZ += (gzDegPerSecRaw - g_wristGy25RuntimeBiasDegZ) * adapt;
+
+  if ((uint32_t)(nowMs - g_lastWristGy25BiasLogMs) >= 5000UL) {
+    g_lastWristGy25BiasLogMs = nowMs;
+    Serial.printf("GY25 runtime gyro bias deg/s = { %.3f, %.3f, %.3f }\n",
+                  g_wristGy25RuntimeBiasDegX,
+                  g_wristGy25RuntimeBiasDegY,
+                  g_wristGy25RuntimeBiasDegZ);
+  }
+}
+
 static gag::Quaternion integrateGyroQuaternion(const gag::Quaternion& currentIn,
                                                float gxDegPerSec,
                                                float gyDegPerSec,
@@ -1637,9 +1682,16 @@ static void updateOneIMU(uint8_t idx) {
     ay / 16384.0f,
     az / 16384.0f
   };
-  const float gxDegPerSec = gx / 131.0f;
-  const float gyDegPerSec = gy / 131.0f;
-  const float gzDegPerSec = gz / 131.0f;
+  float gxDegPerSec = gx / 131.0f;
+  float gyDegPerSec = gy / 131.0f;
+  float gzDegPerSec = gz / 131.0f;
+
+  if (idx == SENSOR_WRIST_GY25) {
+    updateWristGy25RuntimeBias(accelBody, gxDegPerSec, gyDegPerSec, gzDegPerSec, now);
+    gxDegPerSec -= g_wristGy25RuntimeBiasDegX;
+    gyDegPerSec -= g_wristGy25RuntimeBiasDegY;
+    gzDegPerSec -= g_wristGy25RuntimeBiasDegZ;
+  }
 
   gag::Quaternion q = g_sensorFusionQuat[idx];
   if (!g_sensorFusionInitialized[idx]) {
@@ -2191,6 +2243,11 @@ static void resetFusionState() {
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
   g_mouseEmulationEnabled = false;
+  g_wristGy25RuntimeBiasDegX = 0.0f;
+  g_wristGy25RuntimeBiasDegY = 0.0f;
+  g_wristGy25RuntimeBiasDegZ = 0.0f;
+  g_wristGy25StillSinceMs = 0;
+  g_lastWristGy25BiasLogMs = 0;
   resetContinuousThumbMouseControl();
 }
 
