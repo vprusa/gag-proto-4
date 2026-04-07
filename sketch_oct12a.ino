@@ -117,8 +117,8 @@ static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   true,   // thumb
   true,   // index
   true,   // middle
-  false,  // ring
-  false,  // little
+  true,   // ring
+  true,   // little
   true,   // wrist GY25
   true,   // wrist MPU9250
   true,   // wrist GY-511
@@ -138,11 +138,13 @@ static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static bool g_rightButtonPrevPressed = false;
 static uint32_t g_rightButtonLastTriggerMs = 0;
-static bool g_mouseEmulationEnabled = false;
+static bool g_bleMouseSendEnabled = false;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
 static float g_thumbMouseResidualDy = 0.0f;
+static float g_thumbMouseVizDx = 0.0f;
+static float g_thumbMouseVizDy = 0.0f;
 static float g_wristGy25RuntimeBiasDegX = 0.0f;
 static float g_wristGy25RuntimeBiasDegY = 0.0f;
 static float g_wristGy25RuntimeBiasDegZ = 0.0f;
@@ -321,26 +323,46 @@ unsigned long gy511LastT = 0;
 //   { -2211, -216, 2582, -144, 38, -20 }, // wrist MPU9250
 // };
 
+// static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
+//   // { 138, 243, -392, 1, 0, 0 }, // thumb
+//   // { -117, 252, -486, -1, 1, 1 }, // index
+//   { -1602, -847, 2079, 47, -26, 24 },    // thumb
+//   { 1313, -1382, 1813, 142, 21, 20 },    // index
+//   { -1367, -1257, 1421, 250, 92, 52 },   // middle
+//   // { 0, 0, 0, 0, 0, 0 },               // ring
+//   // { -3495, -174, 1537, 42, 0, 0 },       // ring
+//   { -3375, -1117, 1537, 182, 28, 23 },       // ring
+//   // { 122, -1017, 1279, 141, 28, 23 }, // little
+//   { -1357, -2650, 1810, 162, -59, 40 }, // wrist GY25
+//   // { 0, 0, 0, 0, 0, 0 },                  // little
+//   // { 0, 0, 0, 0, 0, 0 },                  // wrist GY25
+//   // { -1285, -3177, 2002, 163, -59, -13 }, // wrist GY25
+//   // { -145, 243, -380, -1, -1, 58 }, // wrist GY25
+//   // { -1357, -3550, 2410, 162, -59, -13 }, // wrist GY25
+//   // { -1357, -3550, 2410, 162, -59, -13 }, // wrist GY25
+//     { -1357, -2650, 1810, 162, -59, 40 }, // wrist GY25
+// // { 22, 921, -794, 0, 0, 57 }, // wrist GY25
+//   // { 21, 919, -795, 0, 0, 57 }, // wrist GY25
+//   // { -3, 345, -357, -1, -1, 57 }, // wrist GY25
+//   { 2840, 4096, 6144, -144, 39, -22 },   // wrist MPU9250
+//   { -24, 2376, 2781, 0, 0, 0 },          // wrist GY-511 (accel-only used in this sketch)
+// };
+
+
 static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
-  // { 138, 243, -392, 1, 0, 0 }, // thumb
-  // { -117, 252, -486, -1, 1, 1 }, // index
-  { -1602, -847, 2079, 47, -26, 24 },    // thumb
-  { 1313, -1382, 1813, 142, 21, 20 },    // index
-  { -1367, -1257, 1421, 250, 92, 52 },   // middle
-  { 0, 0, 0, 0, 0, 0 },                  // ring
-  { 0, 0, 0, 0, 0, 0 },                  // little
-  // { 0, 0, 0, 0, 0, 0 },                  // wrist GY25
-  // { -1285, -3177, 2002, 163, -59, -13 }, // wrist GY25
-  // { -145, 243, -380, -1, -1, 58 }, // wrist GY25
-  // { -1357, -3550, 2410, 162, -59, -13 }, // wrist GY25
-  // { -1357, -3550, 2410, 162, -59, -13 }, // wrist GY25
-    { -1357, -2650, 1810, 162, -59, 40 }, // wrist GY25
-// { 22, 921, -794, 0, 0, 57 }, // wrist GY25
-  // { 21, 919, -795, 0, 0, 57 }, // wrist GY25
-  // { -3, 345, -357, -1, -1, 57 }, // wrist GY25
-  { 2840, 4096, 6144, -144, 39, -22 },   // wrist MPU9250
-  { -24, 2376, 2781, 0, 0, 0 },          // wrist GY-511 (accel-only used in this sketch)
+  { -1602, -847, 2079, 47, -26, 24 },     // thumb
+  { 1313, -1382, 1813, 142, 21, 20 },     // index
+  { -1367, -1257, 1421, 250, 92, 52 },    // middle
+  { -3375, -1117, 1537, 182, 28, 23 },    // ring
+  { 122, -1017, 1279, 141, 28, 23 },      // little
+  { -1357, -2650, 1810, 162, -59, 40 },   // wrist GY25
+  { 2840, 4096, 6144, -144, 39, -22 },    // wrist MPU9250
+  { -24, 2376, 2781, 0, 0, 0 },           // wrist GY-511 (accel-only used in this sketch)
 };
+
+  // { 632, 1031, -210, -136, -27, -22 }, // ring
+  // { 1593, 1947, -776, -20, 87, -16 }, // little
+  // { 161, -674, -157, -1, 5, -14 }, // wrist GY25
 
 // static const gag::offsets::HwOffset6 DEFAULT_HW_OFFSETS[SENSOR_COUNT_ALL] = {
 //   { 0, 0, 0, 0, 0, 0 }, // wrist MPU9250
@@ -389,13 +411,9 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(0.96504295f, 0.02422791f, -0.23485672f, 0.11378706f),   // thumb
   gag::Quaternion(0.46711361f, -0.04733761f, 0.87993670f, 0.07263310f),   // index
   gag::Quaternion(0.87555826f, -0.05684654f, -0.47437924f, 0.07162798f),  // middle
-  gag::Quaternion(),                                                      // ring
-  gag::Quaternion(),                                                      // little
-  // gag::Quaternion(),                                                      // wrist GY25
-  // gag::Quaternion(0.37982515f, 0.60986483f, 0.05722475f, -0.69319785f),
-    // gag::Quaternion(0.49651864f, 0.57824373f, 0.15302165f, -0.62903732f), // wrist GY25
+  gag::Quaternion(0.42607555f, -0.74505758f, -0.24653897f, 0.45007503f), // ring
+  gag::Quaternion(0.35652062f, -0.83403957f, -0.16701196f, 0.38649470f), // little
   gag::Quaternion(0.45700318f, -0.23116538f, 0.66169173f, -0.54760826f), // wrist GY25
-
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
   gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist GY-511
 };
@@ -915,7 +933,7 @@ static void runStartupVibrationTest() {}
 // =====================
 static void execMouseAction(const gag::MouseAction& mouse) {
 #if GAG_ENABLE_BLE_MOUSE
-  if (!g_mouseEmulationEnabled) return;
+  if (!g_bleMouseSendEnabled) return;
   if (!g_bleMouse.isConnected()) return;
   switch (mouse.type) {
     case gag::MouseActionType::MOVE:
@@ -944,16 +962,38 @@ static void execMouseAction(const gag::MouseAction& mouse) {
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx);
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx);
 
-static float applyThumbMouseResponse(float angleDeg) {
-  const float deadzoneDeg = 6.0f;
-  const float fullScaleDeg = 24.0f;
-  const float absDeg = fabsf(angleDeg);
-  if (absDeg <= deadzoneDeg) return 0.0f;
-  float t = (absDeg - deadzoneDeg) / (fullScaleDeg - deadzoneDeg);
+static void computeCircularThumbMouseTarget(float rawDxDeg,
+                                          float rawDyDeg,
+                                          float& targetDx,
+                                          float& targetDy,
+                                          float& maxStepPerLoop) {
+  const float deadzoneRadiusDeg = 6.0f;
+  const float fastRingRadiusDeg = 18.0f;
+  const float fullScaleRadiusDeg = 24.0f;
+  const float normalMaxStepPerLoop = 16.0f;
+  const float fastMaxStepPerLoop = 64.0f;
+
+  const float magnitudeDeg = sqrtf(rawDxDeg * rawDxDeg + rawDyDeg * rawDyDeg);
+  if (magnitudeDeg <= deadzoneRadiusDeg) {
+    targetDx = 0.0f;
+    targetDy = 0.0f;
+    maxStepPerLoop = normalMaxStepPerLoop;
+    return;
+  }
+
+  const float clampedMagnitudeDeg = magnitudeDeg > fullScaleRadiusDeg ? fullScaleRadiusDeg : magnitudeDeg;
+  const float dirX = rawDxDeg / magnitudeDeg;
+  const float dirY = rawDyDeg / magnitudeDeg;
+  float t = (clampedMagnitudeDeg - deadzoneRadiusDeg) / (fullScaleRadiusDeg - deadzoneRadiusDeg);
   if (t < 0.0f) t = 0.0f;
   if (t > 1.0f) t = 1.0f;
-  const float curved = t * t * t;
-  return (angleDeg < 0.0f) ? -curved : curved;
+  const float curvedMagnitude = t * t * t;
+
+  targetDx = dirX * curvedMagnitude;
+  targetDy = dirY * curvedMagnitude;
+  maxStepPerLoop = (clampedMagnitudeDeg >= fastRingRadiusDeg)
+                     ? fastMaxStepPerLoop
+                     : normalMaxStepPerLoop;
 }
 
 static void quaternionToThumbControlEulerDeg(const gag::Quaternion& qIn, float& xDeg, float& zDeg) {
@@ -975,11 +1015,13 @@ static void resetContinuousThumbMouseControl() {
   g_thumbMouseFilteredDy = 0.0f;
   g_thumbMouseResidualDx = 0.0f;
   g_thumbMouseResidualDy = 0.0f;
+  g_thumbMouseVizDx = 0.0f;
+  g_thumbMouseVizDy = 0.0f;
 }
 
 static void updateContinuousThumbMouseControl() {
 #if GAG_ENABLE_BLE_MOUSE
-  if (!g_mouseEmulationEnabled || !g_bleMouse.isConnected() || !physicalSensorQuaternionAvailable(SENSOR_THUMB)) {
+  if (!physicalSensorQuaternionAvailable(SENSOR_THUMB)) {
     resetContinuousThumbMouseControl();
     return;
   }
@@ -988,26 +1030,23 @@ static void updateContinuousThumbMouseControl() {
   float thumbZDeg = 0.0f;
   quaternionToThumbControlEulerDeg(correctedQuaternionForPhysicalSensor(SENSOR_THUMB), thumbXDeg, thumbZDeg);
 
-  const float rawTargetDx = applyThumbMouseResponse(-thumbXDeg);
-  const float rawTargetDy = applyThumbMouseResponse(-thumbZDeg);
-
-  // Align thumb control axes with screen axes.
-  // Observed mapping was rotated by 90 degrees: thumb down->mouse left,
-  // thumb left->mouse up, thumb up->mouse right, thumb right->mouse down.
-  // Rotate the control vector 90 degrees CCW in screen coordinates.
-  const float targetDx = rawTargetDy;
-  const float targetDy = -rawTargetDx;
+  const float rawTargetDxDeg = -thumbZDeg;
+  const float rawTargetDyDeg = thumbXDeg;
+  float targetDx = 0.0f;
+  float targetDy = 0.0f;
+  float maxStepPerLoop = 16.0f;
   const float filterAlpha = 0.22f;
-  const float normalMaxStepPerLoop = 16.0f;
-  const float fastMaxStepPerLoop = 64.0f;
-  const float fastTierThreshold = 0.88f;
-  const float controlMagnitude = fmaxf(fabsf(targetDx), fabsf(targetDy));
-  const float maxStepPerLoop = (controlMagnitude >= fastTierThreshold)
-                                 ? fastMaxStepPerLoop
-                                 : normalMaxStepPerLoop;
+
+  computeCircularThumbMouseTarget(rawTargetDxDeg,
+                                  rawTargetDyDeg,
+                                  targetDx,
+                                  targetDy,
+                                  maxStepPerLoop);
 
   g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
   g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
+  g_thumbMouseVizDx = g_thumbMouseFilteredDx * maxStepPerLoop;
+  g_thumbMouseVizDy = g_thumbMouseFilteredDy * maxStepPerLoop;
 
   const float dxFloat = g_thumbMouseFilteredDx * maxStepPerLoop + g_thumbMouseResidualDx;
   const float dyFloat = g_thumbMouseFilteredDy * maxStepPerLoop + g_thumbMouseResidualDy;
@@ -1016,7 +1055,7 @@ static void updateContinuousThumbMouseControl() {
   g_thumbMouseResidualDx = dxFloat - (float)dx;
   g_thumbMouseResidualDy = dyFloat - (float)dy;
 
-  if (dx != 0 || dy != 0) {
+  if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
   }
 #endif
@@ -1993,9 +2032,9 @@ static void maybeHandleTtgoRightButtonMouseToggle() {
   if (!consumeTtgoRightButtonPress()) return;
   Serial.println("TTGO right button press detected.");
 #if GAG_ENABLE_BLE_MOUSE
-  g_mouseEmulationEnabled = !g_mouseEmulationEnabled;
-  Serial.printf("Mouse emulation %s.\n", g_mouseEmulationEnabled ? "enabled" : "disabled");
-  g_viz.pushLog(g_mouseEmulationEnabled ? "MOUSE ON" : "MOUSE OFF");
+  g_bleMouseSendEnabled = !g_bleMouseSendEnabled;
+  Serial.printf("BLE mouse sending %s.\n", g_bleMouseSendEnabled ? "enabled" : "disabled");
+  g_viz.pushLog(g_bleMouseSendEnabled ? "BLE SEND ON" : "BLE SEND OFF");
 #else
   Serial.println("BLE mouse support is unavailable at compile time.");
 #endif
@@ -2220,6 +2259,12 @@ static gag::viz::FrameInput buildVizFrame() {
   frame.hand_wrist_q = applyWristPivotRotationCorrection(wristSensor, wristBaseQ);
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
+  frame.mouse_dx = g_thumbMouseVizDx;
+  frame.mouse_dy = g_thumbMouseVizDy;
+#if GAG_ENABLE_BLE_MOUSE
+  frame.mouse_send_enabled = g_bleMouseSendEnabled;
+  frame.mouse_ble_connected = g_bleMouse.isConnected();
+#endif
 
   return frame;
 }
@@ -2242,7 +2287,7 @@ static void resetFusionState() {
   gy511LastT = 0;
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
-  g_mouseEmulationEnabled = false;
+  g_bleMouseSendEnabled = false;
   g_wristGy25RuntimeBiasDegX = 0.0f;
   g_wristGy25RuntimeBiasDegY = 0.0f;
   g_wristGy25RuntimeBiasDegZ = 0.0f;
@@ -2319,7 +2364,7 @@ static void initializeGloveRuntime(bool coldBootLog) {
 #endif
 
 #if GAG_ENABLE_BLE_MOUSE
-  g_viz.pushLog("MOUSE OFF");
+  g_viz.pushLog("BLE SEND OFF");
 #endif
   g_viz.pushLog("READY");
 }

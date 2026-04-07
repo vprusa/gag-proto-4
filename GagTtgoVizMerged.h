@@ -3,8 +3,8 @@
  * GagTtgoViz.h
  *
  * Single-file TTGO/T-Display visualization:
- *  - upper region: hand skeleton on the left, fingers pointing up
- *  - lower-middle region: 2 rows × 4 sensor cubes
+ *  - upper region: hand skeleton with mouse movement indicator on the left
+ *  - lower-middle region: 2 rows x 4 sensor cubes
  *  - bottom region: command / recognized-gesture log
  *  - round-robin display modes prepared for future button / gesture switching
  */
@@ -63,6 +63,10 @@ struct FrameInput {
   bool hand_relative_rotation;
   bool cube_relative_rotation;
   uint16_t hand_wrist_color;
+  float mouse_dx;
+  float mouse_dy;
+  bool mouse_send_enabled;
+  bool mouse_ble_connected;
   uint8_t sensor_count = 0;
 
   FrameInput()
@@ -71,6 +75,10 @@ struct FrameInput {
       hand_relative_rotation(true),
       cube_relative_rotation(false),
       hand_wrist_color(TFT_RED),
+      mouse_dx(0.0f),
+      mouse_dy(0.0f),
+      mouse_send_enabled(false),
+      mouse_ble_connected(false),
       sensor_count(0) {
     for (uint8_t i = 0; i < 8; ++i) {
       sensor_q[i] = Quaternion();
@@ -196,6 +204,12 @@ private:
     }
   }
 
+  static float clamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+  }
+
   void drawModeBadge(int x, int y) {
     _tft->drawRoundRect(x, y, 50, 12, 2, TFT_DARKGREY);
     _tft->setTextColor(TFT_WHITE, _bg);
@@ -227,12 +241,63 @@ private:
     _tft->drawLine(x - 3, y + 3, x + 3, y - 3, color);
   }
 
+  void drawMouseMovementIndicator(const FrameInput& in, int x, int y, int w, int h) {
+    const int boxW = (w < 34) ? w : 34;
+    const int boxH = h - 2;
+    const int cx = x + boxW / 2;
+    const int cy = y + boxH / 2 + 1;
+    const int maxLen = ((boxW < boxH ? boxW : boxH) / 2) - 8;
+    const float scale = 1.0f / 22.0f;
+    const float rightN = clamp01(in.mouse_dx * scale);
+    const float leftN = clamp01(-in.mouse_dx * scale);
+    const float downN = clamp01(in.mouse_dy * scale);
+    const float upN = clamp01(-in.mouse_dy * scale);
+    const uint16_t arrowCol = in.mouse_send_enabled ? TFT_CYAN : TFT_DARKGREY;
+    const uint16_t centerCol = in.mouse_ble_connected ? TFT_GREEN : TFT_ORANGE;
+    const int minLen = 4;
+    const int rightLen = minLen + (int)((float)maxLen * rightN);
+    const int leftLen = minLen + (int)((float)maxLen * leftN);
+    const int downLen = minLen + (int)((float)maxLen * downN);
+    const int upLen = minLen + (int)((float)maxLen * upN);
+
+    _tft->drawRoundRect(x, y, boxW, boxH, 3, TFT_DARKGREY);
+    _tft->setTextFont(1);
+    _tft->setTextColor(TFT_LIGHTGREY, _bg);
+    _tft->setCursor(x + 3, y + 2);
+    _tft->print("M");
+
+    _tft->drawLine(cx, cy, cx + rightLen, cy, arrowCol);
+    _tft->drawLine(cx + rightLen, cy, cx + rightLen - 3, cy - 2, arrowCol);
+    _tft->drawLine(cx + rightLen, cy, cx + rightLen - 3, cy + 2, arrowCol);
+
+    _tft->drawLine(cx, cy, cx - leftLen, cy, arrowCol);
+    _tft->drawLine(cx - leftLen, cy, cx - leftLen + 3, cy - 2, arrowCol);
+    _tft->drawLine(cx - leftLen, cy, cx - leftLen + 3, cy + 2, arrowCol);
+
+    _tft->drawLine(cx, cy, cx, cy - upLen, arrowCol);
+    _tft->drawLine(cx, cy - upLen, cx - 2, cy - upLen + 3, arrowCol);
+    _tft->drawLine(cx, cy - upLen, cx + 2, cy - upLen + 3, arrowCol);
+
+    _tft->drawLine(cx, cy, cx, cy + downLen, arrowCol);
+    _tft->drawLine(cx, cy + downLen, cx - 2, cy + downLen - 3, arrowCol);
+    _tft->drawLine(cx, cy + downLen, cx + 2, cy + downLen - 3, arrowCol);
+
+    _tft->fillCircle(cx, cy, 2, centerCol);
+  }
+
   void drawSkeleton(const FrameInput& in, int x, int y, int w, int h, bool flashActive, bool blinkOn) {
     _tft->drawFastHLine(x, y + h - 1, w, TFT_DARKGREY);
     _tft->setTextFont(1);
     _tft->setTextColor(TFT_LIGHTGREY, _bg);
     _tft->setCursor(x + 4, y + 4);
     _tft->print("HAND");
+
+    const int indicatorW = (w > 48) ? 36 : 0;
+    const int handX = x + indicatorW;
+    const int handW = w - indicatorW;
+    if (indicatorW > 0) {
+      drawMouseMovementIndicator(in, x + 2, y + 14, indicatorW - 2, h - 18);
+    }
 
     const Quaternion qWrist = in.hand_wrist_present
       ? in.hand_wrist_q
@@ -262,7 +327,7 @@ private:
     };
 
     int wx, wy;
-    projectSkeletonPoint(wrist, x, y, w, h, wx, wy);
+    projectSkeletonPoint(wrist, handX, y, handW, h, wx, wy);
     _tft->fillCircle(wx, wy, 2, colorForHandWrist(in, flashActive));
 
     for (uint8_t finger = 0; finger < 5; ++finger) {
@@ -276,9 +341,11 @@ private:
         qPose.normalizeInPlace();
       }
       Vec3 dir = rotate(qPose, baseDir[finger]);
-      const float norm = sqrtf(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+      const float norm = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
       if (norm > 0.0001f) {
-        dir.x /= norm; dir.y /= norm; dir.z /= norm;
+        dir.x /= norm;
+        dir.y /= norm;
+        dir.z /= norm;
       } else {
         dir = baseDir[finger];
       }
@@ -289,11 +356,11 @@ private:
       const Vec3 p3 = add(p2, scale(dir, segLen[finger][2]));
       const uint16_t col = colorForSensor(in, sensorIdx, flashActive);
 
-      int x0,y0,x1,y1,x2,y2,x3,y3;
-      projectSkeletonPoint(p0, x, y, w, h, x0, y0);
-      projectSkeletonPoint(p1, x, y, w, h, x1, y1);
-      projectSkeletonPoint(p2, x, y, w, h, x2, y2);
-      projectSkeletonPoint(p3, x, y, w, h, x3, y3);
+      int x0, y0, x1, y1, x2, y2, x3, y3;
+      projectSkeletonPoint(p0, handX, y, handW, h, x0, y0);
+      projectSkeletonPoint(p1, handX, y, handW, h, x1, y1);
+      projectSkeletonPoint(p2, handX, y, handW, h, x2, y2);
+      projectSkeletonPoint(p3, handX, y, handW, h, x3, y3);
 
       _tft->drawLine(wx, wy, x0, y0, TFT_DARKGREY);
       _tft->drawLine(x0, y0, x1, y1, col);
@@ -338,7 +405,6 @@ private:
     const int rows = 2;
     const int cellW = w / cols;
     const int cellH = h / rows;
-    const uint8_t maxCells = 8;
 
     for (int r = 0; r < rows; ++r) {
       for (int c = 0; c < cols; ++c) {
