@@ -87,6 +87,11 @@ static bool readTtgoRightButtonPressed() {
   return GAG_TTGO_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
 }
 
+static bool readTtgoLeftButtonPressed() {
+  const int raw = digitalRead(GAG_PAIR_CONFIRM_BUTTON_PIN);
+  return GAG_PAIR_CONFIRM_BUTTON_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
+}
+
 
 // =====================
 // Sensor topology
@@ -138,6 +143,8 @@ static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static bool g_rightButtonPrevPressed = false;
 static uint32_t g_rightButtonLastTriggerMs = 0;
+static bool g_leftButtonPrevPressed = false;
+static uint32_t g_leftButtonLastTriggerMs = 0;
 static bool g_bleMouseSendEnabled = false;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
@@ -2017,6 +2024,95 @@ static void maybePrintMinorRotationOffsetCandidates() {
 #endif
 }
 
+static bool consumeTtgoLeftButtonPress() {
+  const bool pressed = readTtgoLeftButtonPressed();
+  const uint32_t now = millis();
+  const bool risingEdge = pressed && !g_leftButtonPrevPressed;
+  g_leftButtonPrevPressed = pressed;
+  if (!risingEdge) return false;
+  if (((uint32_t)(now - g_leftButtonLastTriggerMs)) < (uint32_t)GAG_TTGO_BUTTON_DEBOUNCE_MS) return false;
+  g_leftButtonLastTriggerMs = now;
+  return true;
+}
+
+static void resetSensorRuntimeOrientationState() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
+    g_sensorFusionQuat[i] = gag::Quaternion();
+    g_sensorFusionInitialized[i] = false;
+    lastT[i] = now;
+  }
+  wristMagRaw = Vec3{ 0, 0, 0 };
+  gy511Accel_g = Vec3{ 0, 0, 0 };
+  gy511MagRaw = Vec3{ 0, 0, 0 };
+  gy511LastT = 0;
+  g_wristGy25RuntimeBiasDegX = 0.0f;
+  g_wristGy25RuntimeBiasDegY = 0.0f;
+  g_wristGy25RuntimeBiasDegZ = 0.0f;
+  g_wristGy25StillSinceMs = 0;
+  g_lastWristGy25BiasLogMs = 0;
+  resetContinuousThumbMouseControl();
+}
+
+static void warmSensorsAfterSoftReset(uint8_t loops = 20) {
+  for (uint8_t warm = 0; warm < loops; ++warm) {
+    for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) updateOneIMU(i);
+    updateWristMagYaw();
+    updateGY511();
+    delay(10);
+  }
+}
+
+static void performSensorSoftRotationReset() {
+  Serial.println("Soft sensor rotation reset requested.");
+  g_viz.pushLog("SOFT RESET");
+
+  gag::Quaternion oldMinor[SENSOR_COUNT_ALL];
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    oldMinor[s] = g_minorRotationOffset[s];
+  }
+
+  resetSensorRuntimeOrientationState();
+  warmSensorsAfterSoftReset(20);
+
+  Serial.println("Soft reset rotation delta:");
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) {
+      Serial.printf("sensor=%u label=%s unavailable, keeping previous offset\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
+      continue;
+    }
+
+    const gag::Quaternion qAvg = averageCurrentSensorQuat(s, false, 16);
+    gag::Quaternion newMinor = computeMinorRotationCompensation(qAvg, gag::Quaternion());
+    newMinor.normalizeInPlace();
+    g_minorRotationOffset[s] = newMinor;
+
+    gag::Quaternion oldCombined = gag::Quaternion::mul(DEFAULT_SENSOR_ROTATION[s], oldMinor[s]);
+    gag::Quaternion newCombined = gag::Quaternion::mul(DEFAULT_SENSOR_ROTATION[s], newMinor);
+    gag::Quaternion delta = gag::Quaternion::mul(oldCombined.inverseUnit(), newCombined);
+    oldCombined.normalizeInPlace();
+    newCombined.normalizeInPlace();
+    delta.normalizeInPlace();
+
+    Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
+    printQuaternionWxyz("  old_combined = ", oldCombined);
+    printQuaternionWxyz("  new_combined = ", newCombined);
+    printQuaternionWxyz("  delta        = ", delta);
+  }
+
+  printMinorRotationOffsetArray(g_minorRotationOffset, "Updated minor rotation offsets:");
+  autoCaptureSoftwareNeutralOffsets();
+  resetSensorRuntimeOrientationState();
+  warmSensorsAfterSoftReset(8);
+  Serial.println("Soft sensor rotation reset finished.");
+}
+
+static void maybeHandleTtgoLeftButtonSoftReset() {
+  if (!consumeTtgoLeftButtonPress()) return;
+  Serial.println("TTGO left button press detected.");
+  performSensorSoftRotationReset();
+}
+
 static bool consumeTtgoRightButtonPress() {
   const bool pressed = readTtgoRightButtonPressed();
   const uint32_t now = millis();
@@ -2376,7 +2472,9 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   pinMode(GAG_TTGO_RIGHT_BUTTON_PIN, INPUT);
+  pinMode(GAG_PAIR_CONFIRM_BUTTON_PIN, INPUT);
   g_rightButtonPrevPressed = readTtgoRightButtonPressed();
+  g_leftButtonPrevPressed = readTtgoLeftButtonPressed();
 
   tft.init();
   tft.setRotation(GAG_TFT_ROTATION);  // TFT_eSPI rotates the whole UI, including text primitives.
@@ -2405,6 +2503,7 @@ void loop() {
   updateVibrations();
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
+  maybeHandleTtgoLeftButtonSoftReset();
   maybeHandleTtgoRightButtonMouseToggle();
   updateContinuousThumbMouseControl();
 
