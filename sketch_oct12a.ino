@@ -157,6 +157,7 @@ static float g_wristGy25RuntimeBiasDegY = 0.0f;
 static float g_wristGy25RuntimeBiasDegZ = 0.0f;
 static uint32_t g_wristGy25StillSinceMs = 0;
 static uint32_t g_lastWristGy25BiasLogMs = 0;
+static uint32_t g_lastSoftSensorResetMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -2051,6 +2052,7 @@ static void resetSensorRuntimeOrientationState() {
   g_wristGy25RuntimeBiasDegZ = 0.0f;
   g_wristGy25StillSinceMs = 0;
   g_lastWristGy25BiasLogMs = 0;
+  g_lastSoftSensorResetMs = now;
   resetContinuousThumbMouseControl();
 }
 
@@ -2064,6 +2066,7 @@ static void warmSensorsAfterSoftReset(uint8_t loops = 20) {
 }
 
 static void performSensorSoftRotationReset() {
+  g_lastSoftSensorResetMs = millis();
   Serial.println("Soft sensor rotation reset requested.");
   g_viz.pushLog("SOFT RESET");
 
@@ -2111,6 +2114,19 @@ static void maybeHandleTtgoLeftButtonSoftReset() {
   if (!consumeTtgoLeftButtonPress()) return;
   Serial.println("TTGO left button press detected.");
   performSensorSoftRotationReset();
+}
+
+static void maybeHandlePeriodicSoftSensorReset() {
+#if GAG_PERIODIC_SOFT_SENSOR_RESET
+  const uint32_t intervalMs = (uint32_t)GAG_PERIODIC_SOFT_SENSOR_RESET_INTERVAL_MS;
+  if (intervalMs == 0u) return;
+  const uint32_t now = millis();
+  if ((uint32_t)(now - g_lastSoftSensorResetMs) < intervalMs) return;
+  Serial.printf("Periodic soft sensor rotation reset triggered interval_ms=%lu\n",
+                (unsigned long)intervalMs);
+  g_viz.pushLog("AUTO RESET");
+  performSensorSoftRotationReset();
+#endif
 }
 
 static bool consumeTtgoRightButtonPress() {
@@ -2389,6 +2405,7 @@ static void resetFusionState() {
   g_wristGy25RuntimeBiasDegZ = 0.0f;
   g_wristGy25StillSinceMs = 0;
   g_lastWristGy25BiasLogMs = 0;
+  g_lastSoftSensorResetMs = now;
   resetContinuousThumbMouseControl();
 }
 
@@ -2504,6 +2521,7 @@ void loop() {
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
   maybeHandleTtgoLeftButtonSoftReset();
+  maybeHandlePeriodicSoftSensorReset();
   maybeHandleTtgoRightButtonMouseToggle();
   updateContinuousThumbMouseControl();
 
