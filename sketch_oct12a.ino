@@ -276,6 +276,20 @@ const float kHeadingCorrectionGain = 0.08f;
 const Vec3 kWorldUp{ 0.0f, 0.0f, 1.0f };
 const Vec3 kWorldNorth{ 1.0f, 0.0f, 0.0f };
 
+// Per-sensor fused-rotation deadband in deg/s. Small changes below the
+// threshold are suppressed to hide residual jitter from imperfect calibration.
+// Set an entry to 0 to disable the deadband for that sensor.
+static const float SENSOR_ROTATION_IGNORE_DEGS[SENSOR_COUNT_ALL] = {
+  9.0f,  // thumb
+  9.0f,  // index
+  9.0f,  // middle
+  10.0f, // ring
+  10.0f, // little
+  6.0f,  // wrist GY25
+  5.0f,  // wrist MPU9250
+  7.0f   // wrist GY-511
+};
+
 bool wristMagOk = false;
 Vec3 wristMagRaw{ 0, 0, 0 };
 
