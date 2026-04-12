@@ -319,6 +319,8 @@ struct GestureDef {
 
   SensorGestureData perSensor[static_cast<uint8_t>(Sensor::COUNT)];
   SensorAccelGestureData perSensorAccel[static_cast<uint8_t>(Sensor::COUNT)];
+  uint8_t softResetLen = 0;
+  Sensor softReset[static_cast<uint8_t>(Sensor::COUNT)] = {};
   GestureAction action;
 
   inline uint8_t requiredSensorMask() const {
@@ -371,6 +373,8 @@ struct RecognizedGesture {
   const char* label = nullptr;
   const GestureAction* action = nullptr;
   uint8_t sensor_mask = 0;
+  uint8_t softResetLen = 0;
+  Sensor softReset[static_cast<uint8_t>(Sensor::COUNT)] = {};
   uint32_t start_ms = 0;
   uint32_t end_ms = 0;
   uint32_t duration_ms = 0;
@@ -696,6 +700,10 @@ private:
     rg.label = g.label;
     rg.action = &g.action;
     rg.sensor_mask = g.sensorMask();
+    rg.softResetLen = g.softResetLen;
+    for (uint8_t i = 0; i < g.softResetLen && i < static_cast<uint8_t>(Sensor::COUNT); ++i) {
+      rg.softReset[i] = g.softReset[i];
+    }
     rg.start_ms = start_ms;
     rg.end_ms = end_ms;
     rg.duration_ms = end_ms - start_ms;

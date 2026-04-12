@@ -2356,15 +2356,23 @@ static void performSensorHardRotationReset() {
   Serial.println("Hard sensor rotation reset finished.");
 }
 
-static void performSensorSoftRotationReset() {
+static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logToViz = true) {
+  if (sensorMask == 0u) return false;
+
   g_lastSoftSensorResetMs = millis();
   ++g_softResetOperationIndex;
-  Serial.printf("Soft sensor rotation reset requested idx=%lu.\n", (unsigned long)g_softResetOperationIndex);
-  char softResetLog[24];
-  snprintf(softResetLog, sizeof(softResetLog), "%lu SOFT RESET", (unsigned long)g_softResetOperationIndex);
-  g_viz.pushLog(softResetLog);
+  Serial.printf("Soft sensor rotation reset requested idx=%lu mask=0x%02X.\n",
+                (unsigned long)g_softResetOperationIndex,
+                (unsigned)sensorMask);
+  if (logToViz) {
+    char softResetLog[24];
+    snprintf(softResetLog, sizeof(softResetLog), "%lu SOFT RESET", (unsigned long)g_softResetOperationIndex);
+    g_viz.pushLog(softResetLog);
+  }
 
+  bool changedAny = false;
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if ((sensorMask & sensorBitMask(s)) == 0u) continue;
     if (!physicalSensorQuaternionAvailable(s)) {
       Serial.printf("sensor=%u label=%s unavailable, keeping previous offsets\n",
                     (unsigned)s,
@@ -2379,6 +2387,7 @@ static void performSensorSoftRotationReset() {
     newMinor.normalizeInPlace();
     g_minorRotationOffset[s] = newMinor;
     g_offsets.setSoftwareQuaternion(s, gag::Quaternion());
+    changedAny = true;
 
     Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
     printQuaternionWxyz("  default_fixed = ", currentDefaultFixed);
@@ -2388,9 +2397,42 @@ static void performSensorSoftRotationReset() {
     printQuaternionWxyz("  new_sw        = ", gag::Quaternion());
   }
 
-  clearPendingLeftClick();
-  resetContinuousThumbMouseControl();
+  if (changedAny) {
+    clearPendingLeftClick();
+    resetContinuousThumbMouseControl();
+  }
   Serial.println("Soft sensor rotation reset finished.");
+  return changedAny;
+}
+
+static void performSensorSoftRotationReset() {
+  (void)performSensorSoftRotationResetForMask(0xFFu, true);
+}
+
+static uint8_t physicalSensorMaskForRecognizerSensor(gag::Sensor sensor) {
+  switch (sensor) {
+    case gag::Sensor::WRIST:
+      return (uint8_t)(sensorBitMask(SENSOR_WRIST_GY25) |
+                       sensorBitMask(SENSOR_WRIST_MPU9250) |
+                       sensorBitMask(SENSOR_WRIST_GY511));
+    case gag::Sensor::THUMB:  return sensorBitMask(SENSOR_THUMB);
+    case gag::Sensor::INDEX:  return sensorBitMask(SENSOR_INDEX);
+    case gag::Sensor::MIDDLE: return sensorBitMask(SENSOR_MIDDLE);
+    case gag::Sensor::RING:   return sensorBitMask(SENSOR_RING);
+    case gag::Sensor::LITTLE: return sensorBitMask(SENSOR_LITTLE);
+    default:                  return 0u;
+  }
+}
+
+static uint8_t physicalSensorMaskForGestureSoftReset(const gag::RecognizedGesture& gr) {
+  uint8_t mask = 0u;
+  const uint8_t count = (gr.softResetLen <= (uint8_t)gag::Sensor::COUNT)
+                          ? gr.softResetLen
+                          : (uint8_t)gag::Sensor::COUNT;
+  for (uint8_t i = 0; i < count; ++i) {
+    mask |= physicalSensorMaskForRecognizerSensor(gr.softReset[i]);
+  }
+  return mask;
 }
 
 static void maybeHandleTtgoLeftButtonHardReset() {
@@ -2524,6 +2566,10 @@ static void addPoseGesture2(const char* name,
   g.recognition_delay_ms = cooldownMs;
   g.max_time_ms = maxTimeMs;
   g.relative = relativeToWrist;
+  g.softResetLen = 2;
+  g.softReset[0] = gag::Sensor::INDEX;
+  g.softReset[1] = gag::Sensor::WRIST;
+
   g.active = true;
   g.action = action;
   if (relativeToWrist) {
@@ -2568,7 +2614,7 @@ static void installDefaultGestures() {
     a.vibrate_duration_ms = 140;
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
                    15.0f, 250, 300, a, true);
@@ -2659,6 +2705,10 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
     }
     if (gr.action->vibrate) {
       scheduleVibration(gr.action->vibrate_sensor_mask, gr.action->vibrate_duration_ms);
+    }
+    const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
+    if (softResetMask != 0u) {
+      performSensorSoftRotationResetForMask(softResetMask, false);
     }
     execMouseAction(gr.action->mouse);
   }
