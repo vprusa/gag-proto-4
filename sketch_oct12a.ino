@@ -152,6 +152,8 @@ static float g_thumbMouseResidualDx = 0.0f;
 static float g_thumbMouseResidualDy = 0.0f;
 static float g_thumbMouseVizDx = 0.0f;
 static float g_thumbMouseVizDy = 0.0f;
+static bool g_lastAccelBodyValid[SENSOR_COUNT_ALL] = { false };
+st'atic Vec3 g_lastAccelBody[SENSOR_COUNT_ALL];
 static float g_wristGy25RuntimeBiasDegX = 0.0f;
 static float g_wristGy25RuntimeBiasDegY = 0.0f;
 static float g_wristGy25RuntimeBiasDegZ = 0.0f;
@@ -983,6 +985,8 @@ static void execMouseAction(const gag::MouseAction& mouse) {
 
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx);
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx);
+static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx);
+static Vec3 rotateVectorByQuat(const gag::Quaternion& qIn, const Vec3& v);
 
 static void computeCircularThumbMouseTarget(float rawDxDeg,
                                           float rawDyDeg,
@@ -1032,6 +1036,38 @@ static void quaternionToThumbControlEulerDeg(const gag::Quaternion& qIn, float& 
   zDeg = rad2deg(2.0f * asinf(qz));
 }
 
+static bool imuOnlyMouseAccelAvailable(uint8_t sensorIdx) {
+  return sensorIdx < SENSOR_COUNT_ALL
+      && g_sensorInitOk[sensorIdx]
+      && g_sensorFusionInitialized[sensorIdx]
+      && g_lastAccelBodyValid[sensorIdx];
+}
+
+static bool computeImuOnlyMouseLinearAccelWorld(Vec3& out) {
+  const uint8_t wristSensors[] = { SENSOR_WRIST_GY25, SENSOR_WRIST_MPU9250, SENSOR_WRIST_GY511 };
+  Vec3 sum{ 0.0f, 0.0f, 0.0f };
+  uint8_t count = 0;
+
+  for (uint8_t i = 0; i < sizeof(wristSensors); ++i) {
+    const uint8_t sensorIdx = wristSensors[i];
+    if (!imuOnlyMouseAccelAvailable(sensorIdx)) continue;
+    const Vec3 accelWorld = rotateVectorByQuat(rawQuaternionForPhysicalSensor(sensorIdx), g_lastAccelBody[sensorIdx]);
+    const Vec3 linearWorld = vecSub(accelWorld, kWorldUp);
+    sum.x += linearWorld.x;
+    sum.y += linearWorld.y;
+    sum.z += linearWorld.z;
+    ++count;
+  }
+
+  if (count == 0u) {
+    out = Vec3{ 0.0f, 0.0f, 0.0f };
+    return false;
+  }
+
+  out = vecScale(sum, 1.0f / (float)count);
+  return true;
+}
+
 static void resetContinuousThumbMouseControl() {
   g_thumbMouseFilteredDx = 0.0f;
   g_thumbMouseFilteredDy = 0.0f;
@@ -1043,6 +1079,57 @@ static void resetContinuousThumbMouseControl() {
 
 static void updateContinuousThumbMouseControl() {
 #if GAG_ENABLE_BLE_MOUSE
+#if GAG_ENABLE_IMU_ONLY_MOUSE
+  Vec3 linearWorld;
+  if (!computeImuOnlyMouseLinearAccelWorld(linearWorld)) {
+    resetContinuousThumbMouseControl();
+    return;
+  }
+
+  const float rawTargetDxAccel = linearWorld.x;
+  const float rawTargetDyAccel = -linearWorld.y;
+  const float deadzoneAccelG = 0.035f;
+  const float fastBandAccelG = 0.12f;
+  const float fullScaleAccelG = 0.25f;
+  const float normalMaxStepPerLoop = 10.0f;
+  const float fastMaxStepPerLoop = 28.0f;
+  const float filterAlpha = 0.30f;
+
+  float targetDx = 0.0f;
+  float targetDy = 0.0f;
+  float maxStepPerLoop = normalMaxStepPerLoop;
+  const float magnitudeAccelG = sqrtf(rawTargetDxAccel * rawTargetDxAccel + rawTargetDyAccel * rawTargetDyAccel);
+  if (magnitudeAccelG > deadzoneAccelG) {
+    const float clampedMagnitudeAccelG = magnitudeAccelG > fullScaleAccelG ? fullScaleAccelG : magnitudeAccelG;
+    const float dirX = rawTargetDxAccel / magnitudeAccelG;
+    const float dirY = rawTargetDyAccel / magnitudeAccelG;
+    float t = (clampedMagnitudeAccelG - deadzoneAccelG) / (fullScaleAccelG - deadzoneAccelG);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    const float curvedMagnitude = t * t * t;
+    targetDx = dirX * curvedMagnitude;
+    targetDy = dirY * curvedMagnitude;
+    if (clampedMagnitudeAccelG >= fastBandAccelG) maxStepPerLoop = fastMaxStepPerLoop;
+  }
+
+  g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
+  g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
+  if (targetDx == 0.0f) g_thumbMouseFilteredDx *= 0.82f;
+  if (targetDy == 0.0f) g_thumbMouseFilteredDy *= 0.82f;
+  g_thumbMouseVizDx = g_thumbMouseFilteredDx * maxStepPerLoop;
+  g_thumbMouseVizDy = g_thumbMouseFilteredDy * maxStepPerLoop;
+
+  const float dxFloat = g_thumbMouseFilteredDx * maxStepPerLoop + g_thumbMouseResidualDx;
+  const float dyFloat = g_thumbMouseFilteredDy * maxStepPerLoop + g_thumbMouseResidualDy;
+  const int8_t dx = (int8_t)dxFloat;
+  const int8_t dy = (int8_t)dyFloat;
+  g_thumbMouseResidualDx = dxFloat - (float)dx;
+  g_thumbMouseResidualDy = dyFloat - (float)dy;
+
+  if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
+    g_bleMouse.move(dx, dy, 0, 0);
+  }
+#else
   if (!physicalSensorQuaternionAvailable(SENSOR_THUMB)) {
     resetContinuousThumbMouseControl();
     return;
@@ -1080,6 +1167,7 @@ static void updateContinuousThumbMouseControl() {
   if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
   }
+#endif
 #endif
 }
 
@@ -1597,6 +1685,8 @@ static void updateGY511() {
   if (!readGY511Accel(a)) return;
   remapGy511VectorToGloveFrame(a);
   gy511Accel_g = a;
+  g_lastAccelBody[SENSOR_WRIST_GY511] = a;
+  g_lastAccelBodyValid[SENSOR_WRIST_GY511] = true;
 
   const gag::Quaternion prevQ = g_sensorFusionQuat[SENSOR_WRIST_GY511];
   gag::Quaternion q = prevQ;
@@ -1782,6 +1872,8 @@ static void updateOneIMU(uint8_t idx) {
     ay / 16384.0f,
     az / 16384.0f
   };
+  g_lastAccelBody[idx] = accelBody;
+  g_lastAccelBodyValid[idx] = true;
   float gxDegPerSec = gx / 131.0f;
   float gyDegPerSec = gy / 131.0f;
   float gzDegPerSec = gz / 131.0f;
@@ -2096,6 +2188,8 @@ static void resetSensorRuntimeOrientationState() {
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     g_sensorFusionQuat[i] = gag::Quaternion();
     g_sensorFusionInitialized[i] = false;
+    g_lastAccelBody[i] = Vec3{ 0.0f, 0.0f, 0.0f };
+    g_lastAccelBodyValid[i] = false;
     lastT[i] = now;
   }
   wristMagRaw = Vec3{ 0, 0, 0 };
@@ -2471,6 +2565,8 @@ static void resetFusionState() {
     g_sensorFusionInitialized[i] = false;
     g_sensorInitOk[i] = false;
     g_sensorMpuAddr[i] = 0;
+    g_lastAccelBody[i] = Vec3{ 0.0f, 0.0f, 0.0f };
+    g_lastAccelBodyValid[i] = false;
     lastT[i] = now;
     g_lastFifoResetMs[i] = 0;
   }
