@@ -1088,12 +1088,12 @@ static void updateContinuousThumbMouseControl() {
 
   const float rawTargetDxAccel = linearWorld.x;
   const float rawTargetDyAccel = -linearWorld.y;
-  const float deadzoneAccelG = 0.035f;
-  const float fastBandAccelG = 0.12f;
-  const float fullScaleAccelG = 0.25f;
-  const float normalMaxStepPerLoop = 10.0f;
-  const float fastMaxStepPerLoop = 28.0f;
-  const float filterAlpha = 0.30f;
+  const float deadzoneAccelG = 0.015f;
+  const float fastBandAccelG = 0.06f;
+  const float fullScaleAccelG = 0.14f;
+  const float normalMaxStepPerLoop = 20.0f;
+  const float fastMaxStepPerLoop = 52.0f;
+  const float filterAlpha = 0.42f;
 
   float targetDx = 0.0f;
   float targetDy = 0.0f;
@@ -2400,19 +2400,19 @@ static void installDefaultGestures() {
   using gag::MouseActionType;
 
   // Little finger up -> visualization mode cycle + blink + vibration.
-  {
-    gag::GestureAction a;
-    a.switch_visualization_mode = true;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_ORANGE;
-    a.vibrate = true;
-    a.vibrate_sensor_mask = (1u << SENSOR_LITTLE);
-    a.vibrate_duration_ms = 220;
-    addPoseGesture("little_up_mode", "GAG_CYCLE_MODE", "MODE",
-                   gag::Sensor::LITTLE,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -28.0f),
-                   18.0f, 700, 1200, a);
-  }
+  // {
+  //   gag::GestureAction a;
+  //   a.switch_visualization_mode = true;
+  //   a.blink_visualization = true;
+  //   a.blink_color565 = TFT_ORANGE;
+  //   a.vibrate = true;
+  //   a.vibrate_sensor_mask = (1u << SENSOR_LITTLE);
+  //   a.vibrate_duration_ms = 220;
+  //   addPoseGesture("little_up_mode", "GAG_CYCLE_MODE", "MODE",
+  //                  gag::Sensor::LITTLE,
+  //                  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -28.0f),
+  //                  18.0f, 700, 1200, a);
+  // }
 
   // Index bend -> left click.
   {
