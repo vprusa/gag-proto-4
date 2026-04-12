@@ -2366,24 +2366,29 @@ static void performSensorSoftRotationReset() {
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) {
-      Serial.printf("sensor=%u label=%s unavailable, keeping previous software offset\n",
+      Serial.printf("sensor=%u label=%s unavailable, keeping previous offsets\n",
                     (unsigned)s,
                     SENSOR_OFFSET_LABELS[s]);
       continue;
     }
 
-    const gag::Quaternion currentPhysicalFixed = physicalFixedQuaternionForPhysicalSensor(s);
+    const gag::Quaternion currentDefaultFixed = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
+    const gag::Quaternion oldMinor = g_minorRotationOffset[s];
     const gag::Quaternion oldSw = g_offsets.softwareQuaternion(s);
-    const gag::Quaternion newSw = gag::offsets::OffsetStore::computeNeutralizingSoftwareOffset(currentPhysicalFixed,
-                                                                                                gag::Quaternion());
-    g_offsets.setSoftwareQuaternion(s, newSw);
+    gag::Quaternion newMinor = computeMinorRotationCompensation(currentDefaultFixed, gag::Quaternion());
+    newMinor.normalizeInPlace();
+    g_minorRotationOffset[s] = newMinor;
+    g_offsets.setSoftwareQuaternion(s, gag::Quaternion());
 
     Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
-    printQuaternionWxyz("  physical_fixed = ", currentPhysicalFixed);
-    printQuaternionWxyz("  old_sw         = ", oldSw);
-    printQuaternionWxyz("  new_sw         = ", newSw);
+    printQuaternionWxyz("  default_fixed = ", currentDefaultFixed);
+    printQuaternionWxyz("  old_minor     = ", oldMinor);
+    printQuaternionWxyz("  new_minor     = ", newMinor);
+    printQuaternionWxyz("  old_sw        = ", oldSw);
+    printQuaternionWxyz("  new_sw        = ", gag::Quaternion());
   }
 
+  clearPendingLeftClick();
   resetContinuousThumbMouseControl();
   Serial.println("Soft sensor rotation reset finished.");
 }
@@ -2525,9 +2530,10 @@ static void addPoseGesture2(const char* name,
     g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
     g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
   }
-  g.perSensor[(uint8_t)sensor].len = 2;
-  g.perSensor[(uint8_t)sensor].q[0] = target;
-  g.perSensor[(uint8_t)sensor].q[1] = target2;
+  g.perSensor[(uint8_t)sensor].len = 3;
+  g.perSensor[(uint8_t)sensor].q[0] = gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f);
+  g.perSensor[(uint8_t)sensor].q[1] = target;
+  g.perSensor[(uint8_t)sensor].q[2] = target2;
   g_recognizer.addGesture(g);
 }
 
@@ -2563,8 +2569,9 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
-                   18.0f, 280, 500, a, true);
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   15.0f, 250, 300, a, true);
   }
 
   // Stronger index bend -> second left click for OS-level double click.
@@ -2579,9 +2586,10 @@ static void installDefaultGestures() {
     a.vibrate_duration_ms = 140;
     addPoseGesture2("index_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "DLCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 60.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -60.0f),
-                   22.0f, 320, 500, a, true);
+                  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -25.0f),
+                   15.0f, 250, 300, a, true);
   }
 
   // Ring bend -> right click.
@@ -2644,7 +2652,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       resetContinuousThumbMouseControl();
       Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
       g_viz.pushLog(g_wristMouseEmulationEnabled ? "WRIST MOUSE ON" : "WRIST MOUSE OFF");
-      scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 30 : 60);
+      scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 60 : 120);
     }
     if (gr.action->blink_visualization) {
       g_viz.flash(gr.sensor_mask, gr.action->blink_color565, 180);
