@@ -1279,6 +1279,27 @@ static gag::Quaternion applyHeadingCorrection(const gag::Quaternion& currentIn, 
   return out;
 }
 
+static gag::Quaternion applyQuaternionAngularDeadband(uint8_t sensorIdx,
+                                                      const gag::Quaternion& prevIn,
+                                                      const gag::Quaternion& candidateIn,
+                                                      float dtSec) {
+  if (sensorIdx >= SENSOR_COUNT_ALL) return candidateIn;
+  const float thresholdDegPerSec = SENSOR_ROTATION_IGNORE_DEGS[sensorIdx];
+  if (thresholdDegPerSec <= 0.0f || dtSec <= 0.0f) return candidateIn;
+
+  const gag::Quaternion prev = prevIn.normalized();
+  const gag::Quaternion candidate = candidateIn.normalized();
+  const float deltaDeg = rad2deg(gag::Quaternion::angularDistance(prev, candidate));
+  const float speedDegPerSec = deltaDeg / dtSec;
+
+  if (speedDegPerSec <= thresholdDegPerSec) return prev;
+  const float fullAcceptDegPerSec = thresholdDegPerSec * 2.0f;
+  if (speedDegPerSec >= fullAcceptDegPerSec) return candidate;
+
+  const float blend = (speedDegPerSec - thresholdDegPerSec) / (fullAcceptDegPerSec - thresholdDegPerSec);
+  return quatNlerp(prev, candidate, blend);
+}
+
 static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
                                         int16_t& ax, int16_t& ay, int16_t& az,
                                         int16_t& gx, int16_t& gy, int16_t& gz) {
@@ -1568,12 +1589,17 @@ static void remapGy511VectorToGloveFrame(Vec3& v) {
 
 static void updateGY511() {
   if (!gy511Ok || !g_sensorInitOk[SENSOR_WRIST_GY511]) return;
+  const uint32_t nowMs = millis();
+  float dtSec = (gy511LastT == 0) ? 0.01f : (float)(nowMs - gy511LastT) / 1000.0f;
+  if (dtSec <= 0.0f) dtSec = 0.01f;
+  if (dtSec > 0.1f) dtSec = 0.1f;
   Vec3 a;
   if (!readGY511Accel(a)) return;
   remapGy511VectorToGloveFrame(a);
   gy511Accel_g = a;
 
-  gag::Quaternion q = g_sensorFusionQuat[SENSOR_WRIST_GY511];
+  const gag::Quaternion prevQ = g_sensorFusionQuat[SENSOR_WRIST_GY511];
+  gag::Quaternion q = prevQ;
   if (!g_sensorFusionInitialized[SENSOR_WRIST_GY511]) {
     q = gag::Quaternion();
   }
@@ -1588,9 +1614,13 @@ static void updateGY511() {
     }
   }
 
+  if (g_sensorFusionInitialized[SENSOR_WRIST_GY511]) {
+    q = applyQuaternionAngularDeadband(SENSOR_WRIST_GY511, prevQ, q, dtSec);
+  }
+
   g_sensorFusionQuat[SENSOR_WRIST_GY511] = q;
   g_sensorFusionInitialized[SENSOR_WRIST_GY511] = true;
-  gy511LastT = millis();
+  gy511LastT = nowMs;
 }
 
 // =====================
@@ -1632,7 +1662,16 @@ static void updateWristMagYaw() {
   Vec3 m;
   if (readWristMag(m)) {
     wristMagRaw = m;
-    g_sensorFusionQuat[SENSOR_WRIST_MPU9250] = applyHeadingCorrection(g_sensorFusionQuat[SENSOR_WRIST_MPU9250], m, kHeadingCorrectionGain);
+    const gag::Quaternion prevQ = g_sensorFusionQuat[SENSOR_WRIST_MPU9250];
+    gag::Quaternion q = applyHeadingCorrection(prevQ, m, kHeadingCorrectionGain);
+    const uint32_t nowMs = millis();
+    float dtSec = (lastT[SENSOR_WRIST_MPU9250] == 0)
+                    ? 0.02f
+                    : (float)(nowMs - lastT[SENSOR_WRIST_MPU9250]) / 1000.0f;
+    if (dtSec < 0.02f) dtSec = 0.02f;
+    if (dtSec > 0.1f) dtSec = 0.1f;
+    g_sensorFusionQuat[SENSOR_WRIST_MPU9250] =
+      applyQuaternionAngularDeadband(SENSOR_WRIST_MPU9250, prevQ, q, dtSec);
   }
 }
 
@@ -1754,13 +1793,15 @@ static void updateOneIMU(uint8_t idx) {
     gzDegPerSec -= g_wristGy25RuntimeBiasDegZ;
   }
 
-  gag::Quaternion q = g_sensorFusionQuat[idx];
+  const gag::Quaternion prevQ = g_sensorFusionQuat[idx];
+  gag::Quaternion q = prevQ;
   if (!g_sensorFusionInitialized[idx]) {
     q = applyTiltCorrection(gag::Quaternion(), accelBody, 1.0f);
     g_sensorFusionInitialized[idx] = true;
   } else {
     q = integrateGyroQuaternion(q, gxDegPerSec, gyDegPerSec, gzDegPerSec, dt);
     q = applyTiltCorrection(q, accelBody, kTiltCorrectionGain);
+    q = applyQuaternionAngularDeadband(idx, prevQ, q, dt);
   }
 
   g_sensorFusionQuat[idx] = q;
