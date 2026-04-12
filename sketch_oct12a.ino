@@ -152,6 +152,7 @@ static uint32_t g_rightButtonLastTriggerMs = 0;
 static bool g_leftButtonPrevPressed = false;
 static uint32_t g_leftButtonLastTriggerMs = 0;
 static bool g_bleMouseSendEnabled = false;
+static bool g_isMouseMoving = false;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
@@ -959,6 +960,16 @@ static void execMouseAction(const gag::MouseAction& mouse) {
 #if GAG_ENABLE_BLE_MOUSE
   if (!g_bleMouseSendEnabled) return;
   if (!g_bleMouse.isConnected()) return;
+  if (g_isMouseMoving) {
+    switch (mouse.type) {
+      case gag::MouseActionType::CLICK:
+      case gag::MouseActionType::PRESS:
+      case gag::MouseActionType::RELEASE:
+        return;
+      default:
+        break;
+    }
+  }
   switch (mouse.type) {
     case gag::MouseActionType::MOVE:
       g_bleMouse.move(mouse.dx, mouse.dy, 0, 0);
@@ -1075,6 +1086,7 @@ static void resetContinuousThumbMouseControl() {
   g_thumbMouseResidualDy = 0.0f;
   g_thumbMouseVizDx = 0.0f;
   g_thumbMouseVizDy = 0.0f;
+  g_isMouseMoving = false;
 }
 
 static void updateContinuousThumbMouseControl() {
@@ -1125,6 +1137,7 @@ static void updateContinuousThumbMouseControl() {
   const int8_t dy = (int8_t)dyFloat;
   g_thumbMouseResidualDx = dxFloat - (float)dx;
   g_thumbMouseResidualDy = dyFloat - (float)dy;
+  g_isMouseMoving = (dx != 0 || dy != 0 || fabsf(g_thumbMouseVizDx) > 0.25f || fabsf(g_thumbMouseVizDy) > 0.25f);
 
   if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
@@ -1163,6 +1176,7 @@ static void updateContinuousThumbMouseControl() {
   const int8_t dy = (int8_t)dyFloat;
   g_thumbMouseResidualDx = dxFloat - (float)dx;
   g_thumbMouseResidualDy = dyFloat - (float)dy;
+  g_isMouseMoving = (dx != 0 || dy != 0 || fabsf(g_thumbMouseVizDx) > 0.25f || fabsf(g_thumbMouseVizDy) > 0.25f);
 
   if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
