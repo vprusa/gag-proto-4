@@ -154,6 +154,10 @@ static uint32_t g_leftButtonLastTriggerMs = 0;
 static bool g_bleMouseSendEnabled = false;
 static bool g_isMouseMoving = false;
 static bool g_wristMouseEmulationEnabled = true;
+static bool g_pendingLeftClick = false;
+static uint32_t g_pendingLeftClickDueMs = 0;
+static uint32_t g_ignoreSingleLeftClickUntilMs = 0;
+static uint32_t g_softResetOperationIndex = 0;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
@@ -1104,6 +1108,27 @@ static void resetContinuousThumbMouseControl() {
   g_thumbMouseVizDx = 0.0f;
   g_thumbMouseVizDy = 0.0f;
   g_isMouseMoving = false;
+}
+
+static void clearPendingLeftClick() {
+  g_pendingLeftClick = false;
+  g_pendingLeftClickDueMs = 0;
+}
+
+static void queuePendingLeftClick(uint32_t dueMs) {
+  g_pendingLeftClick = true;
+  g_pendingLeftClickDueMs = dueMs;
+}
+
+static void processPendingLeftClick() {
+  if (!g_pendingLeftClick) return;
+  const uint32_t now = millis();
+  if ((int32_t)(now - g_pendingLeftClickDueMs) < 0) return;
+  clearPendingLeftClick();
+  gag::MouseAction mouse;
+  mouse.type = gag::MouseActionType::CLICK;
+  mouse.button = MOUSE_LEFT;
+  execMouseAction(mouse);
 }
 
 static void updateContinuousThumbMouseControl() {
@@ -2333,8 +2358,11 @@ static void performSensorHardRotationReset() {
 
 static void performSensorSoftRotationReset() {
   g_lastSoftSensorResetMs = millis();
-  Serial.println("Soft sensor rotation reset requested.");
-  g_viz.pushLog("SOFT RESET");
+  ++g_softResetOperationIndex;
+  Serial.printf("Soft sensor rotation reset requested idx=%lu.\n", (unsigned long)g_softResetOperationIndex);
+  char softResetLog[24];
+  snprintf(softResetLog, sizeof(softResetLog), "%lu SOFT RESET", (unsigned long)g_softResetOperationIndex);
+  g_viz.pushLog(softResetLog);
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) {
@@ -2363,6 +2391,10 @@ static void performSensorSoftRotationReset() {
 static void maybeHandleTtgoLeftButtonHardReset() {
   if (!consumeTtgoLeftButtonPress()) return;
   Serial.println("TTGO left button press detected.");
+  g_wristMouseEmulationEnabled = false;
+  clearPendingLeftClick();
+  resetContinuousThumbMouseControl();
+  g_viz.pushLog("WRIST MOUSE OFF");
   performSensorHardRotationReset();
 }
 
@@ -2593,14 +2625,26 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
   }
 
   if (gr.action) {
+    const uint32_t nowMs = millis();
+    if (gr.name && strcmp(gr.name, "index_left_click") == 0) {
+      if ((int32_t)(nowMs - g_ignoreSingleLeftClickUntilMs) < 0) return;
+      queuePendingLeftClick(nowMs + 120U);
+      return;
+    }
+    if (gr.name && strcmp(gr.name, "index_left_double_click") == 0) {
+      clearPendingLeftClick();
+      g_ignoreSingleLeftClickUntilMs = nowMs + 220U;
+    }
     if (gr.action->switch_visualization_mode) {
       g_viz.nextMode();
     }
     if (gr.action->toggle_wrist_mouse_emulation) {
       g_wristMouseEmulationEnabled = !g_wristMouseEmulationEnabled;
+      clearPendingLeftClick();
       resetContinuousThumbMouseControl();
       Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
       g_viz.pushLog(g_wristMouseEmulationEnabled ? "WRIST MOUSE ON" : "WRIST MOUSE OFF");
+      scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 30 : 60);
     }
     if (gr.action->blink_visualization) {
       g_viz.flash(gr.sensor_mask, gr.action->blink_color565, 180);
@@ -2719,6 +2763,9 @@ static void resetFusionState() {
   g_lastMinorRotationOffsetPrintMs = 0;
   g_bleMouseSendEnabled = false;
   g_wristMouseEmulationEnabled = true;
+  clearPendingLeftClick();
+  g_ignoreSingleLeftClickUntilMs = 0;
+  g_softResetOperationIndex = 0;
   g_wristGy25RuntimeBiasDegX = 0.0f;
   g_wristGy25RuntimeBiasDegY = 0.0f;
   g_wristGy25RuntimeBiasDegZ = 0.0f;
@@ -2843,6 +2890,7 @@ void loop() {
   maybeHandlePeriodicSoftSensorReset();
   maybeHandleTtgoRightButtonMouseToggle();
   updateContinuousThumbMouseControl();
+  processPendingLeftClick();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
