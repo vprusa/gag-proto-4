@@ -153,6 +153,7 @@ static bool g_leftButtonPrevPressed = false;
 static uint32_t g_leftButtonLastTriggerMs = 0;
 static bool g_bleMouseSendEnabled = false;
 static bool g_isMouseMoving = false;
+static bool g_wristMouseEmulationEnabled = true;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
@@ -963,6 +964,7 @@ static void execMouseAction(const gag::MouseAction& mouse) {
   if (g_isMouseMoving) {
     switch (mouse.type) {
       case gag::MouseActionType::CLICK:
+      case gag::MouseActionType::DOUBLE_CLICK:
       case gag::MouseActionType::PRESS:
       case gag::MouseActionType::RELEASE:
         return;
@@ -975,6 +977,11 @@ static void execMouseAction(const gag::MouseAction& mouse) {
       g_bleMouse.move(mouse.dx, mouse.dy, 0, 0);
       break;
     case gag::MouseActionType::CLICK:
+      g_bleMouse.click(mouse.button);
+      break;
+    case gag::MouseActionType::DOUBLE_CLICK:
+      g_bleMouse.click(mouse.button);
+      delay(25);
       g_bleMouse.click(mouse.button);
       break;
     case gag::MouseActionType::PRESS:
@@ -1102,7 +1109,7 @@ static void resetContinuousThumbMouseControl() {
 static void updateContinuousThumbMouseControl() {
 #if GAG_ENABLE_BLE_MOUSE
 #if GAG_ENABLE_WRIST_MOUSE_EMULATION
-  if (!selectedWristQuaternionAvailable()) {
+  if (!g_wristMouseEmulationEnabled || !selectedWristQuaternionAvailable()) {
     resetContinuousThumbMouseControl();
     return;
   }
@@ -2461,6 +2468,40 @@ static void addPoseGesture(const char* name,
   g_recognizer.addGesture(g);
 }
 
+static void addPoseGesture2(const char* name,
+                           const char* command,
+                           const char* label,
+                           gag::Sensor sensor,
+                           const gag::Quaternion& target,
+                           const gag::Quaternion& target2,
+                           float thresholdDeg,
+                           uint32_t cooldownMs,
+                           uint32_t maxTimeMs,
+                           const gag::GestureAction& action,
+                           bool relativeToWrist = false) {
+  gag::GestureDef g;
+  strncpy(g.name, name, sizeof(g.name) - 1);
+  strncpy(g.command, command, sizeof(g.command) - 1);
+  strncpy(g.label, label, sizeof(g.label) - 1);
+  g.threshold_rad = deg2rad(thresholdDeg);
+  g.recognition_delay_ms = cooldownMs;
+  g.max_time_ms = maxTimeMs;
+  g.relative = relativeToWrist;
+  g.active = true;
+  g.action = action;
+  if (relativeToWrist) {
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
+  }
+  g.perSensor[(uint8_t)sensor].len = 4;
+  g.perSensor[(uint8_t)sensor].q[0] = target;
+  g.perSensor[(uint8_t)sensor].q[1] = target;
+  g.perSensor[(uint8_t)sensor].q[2] = target2;
+  g.perSensor[(uint8_t)sensor].q[3] = target2;
+  g_recognizer.addGesture(g);
+}
+
+
 static void installDefaultGestures() {
   using gag::MouseActionType;
 
@@ -2486,15 +2527,31 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_GREEN;
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_LEFT;
-    // a.vibrate = true;
     a.vibrate = false;
     a.vibrate_sensor_mask = (1u << SENSOR_INDEX);
     a.vibrate_duration_ms = 140;
-    // a.vibrate_duration_ms = 30;
-    addPoseGesture("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
+    addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
                    18.0f, 320, 900, a, true);
+  }
+
+  // Stronger index bend -> second left click for OS-level double click.
+  {
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_GREEN;
+    a.mouse.type = MouseActionType::DOUBLE_CLICK;
+    a.mouse.button = MOUSE_LEFT;
+    a.vibrate = false;
+    a.vibrate_sensor_mask = (1u << SENSOR_INDEX);
+    a.vibrate_duration_ms = 140;
+    addPoseGesture2("index_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "DLCLK",
+                   gag::Sensor::INDEX,
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 52.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
+                   16.0f, 320, 900, a, true);
   }
 
   // Ring bend -> right click.
@@ -2510,8 +2567,20 @@ static void installDefaultGestures() {
                    18.0f, 320, 900, a);
   }
 
+  // Thumb right gesture toggles wrist mouse emulation.
+  {
+    gag::GestureAction a;
+    a.toggle_wrist_mouse_emulation = true;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_CYAN;
+    addPoseGesture("thumb_toggle_wrist_mouse", "TOGGLE_WRIST_MOUSE", "WMOU",
+                   gag::Sensor::THUMB,
+                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -34.0f),
+                   18.0f, 450, 900, a);
+  }
+
   // Thumb mouse movement now uses continuous control driven from the
-  // corrected thumb pose in updateContinuousThumbMouseControl().
+  // corrected wrist pose in updateContinuousThumbMouseControl().
 }
 
 // =====================
@@ -2528,6 +2597,12 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
   if (gr.action) {
     if (gr.action->switch_visualization_mode) {
       g_viz.nextMode();
+    }
+    if (gr.action->toggle_wrist_mouse_emulation) {
+      g_wristMouseEmulationEnabled = !g_wristMouseEmulationEnabled;
+      resetContinuousThumbMouseControl();
+      Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
+      g_viz.pushLog(g_wristMouseEmulationEnabled ? "WRIST MOUSE ON" : "WRIST MOUSE OFF");
     }
     if (gr.action->blink_visualization) {
       g_viz.flash(gr.sensor_mask, gr.action->blink_color565, 180);
@@ -2645,6 +2720,7 @@ static void resetFusionState() {
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
   g_bleMouseSendEnabled = false;
+  g_wristMouseEmulationEnabled = true;
   g_wristGy25RuntimeBiasDegX = 0.0f;
   g_wristGy25RuntimeBiasDegY = 0.0f;
   g_wristGy25RuntimeBiasDegZ = 0.0f;

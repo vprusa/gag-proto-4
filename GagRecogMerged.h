@@ -275,6 +275,7 @@ enum class MouseActionType : uint8_t {
   NONE = 0,
   MOVE,
   CLICK,
+  DOUBLE_CLICK,
   PRESS,
   RELEASE,
   SCROLL
@@ -292,6 +293,7 @@ struct MouseAction {
 struct GestureAction {
   bool switch_visualization_mode = false;
   bool blink_visualization = false;
+  bool toggle_wrist_mouse_emulation = false;
   uint16_t blink_color565 = 0xFFFF;
 
   bool vibrate = false;
