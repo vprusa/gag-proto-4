@@ -1047,6 +1047,16 @@ static void quaternionToThumbControlEulerDeg(const gag::Quaternion& qIn, float& 
   zDeg = rad2deg(2.0f * asinf(qz));
 }
 
+static void quaternionToWristControlEulerDeg(const gag::Quaternion& qIn, float& xDeg, float& yDeg) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+
+  const float qx = q.x < -1.0f ? -1.0f : (q.x > 1.0f ? 1.0f : q.x);
+  const float qy = q.y < -1.0f ? -1.0f : (q.y > 1.0f ? 1.0f : q.y);
+  xDeg = rad2deg(2.0f * asinf(qx));
+  yDeg = rad2deg(2.0f * asinf(qy));
+}
+
 static bool imuOnlyMouseAccelAvailable(uint8_t sensorIdx) {
   return sensorIdx < SENSOR_COUNT_ALL
       && g_sensorInitOk[sensorIdx]
@@ -1091,7 +1101,46 @@ static void resetContinuousThumbMouseControl() {
 
 static void updateContinuousThumbMouseControl() {
 #if GAG_ENABLE_BLE_MOUSE
-#if GAG_ENABLE_IMU_ONLY_MOUSE
+#if GAG_ENABLE_WRIST_MOUSE_EMULATION
+  if (!selectedWristQuaternionAvailable()) {
+    resetContinuousThumbMouseControl();
+    return;
+  }
+
+  float wristXDeg = 0.0f;
+  float wristYDeg = 0.0f;
+  quaternionToWristControlEulerDeg(correctedLogicalWristQuaternion(), wristXDeg, wristYDeg);
+
+  const float rawTargetDxDeg = wristYDeg;
+  const float rawTargetDyDeg = wristXDeg;
+  float targetDx = 0.0f;
+  float targetDy = 0.0f;
+  float maxStepPerLoop = 20.0f;
+  const float filterAlpha = 0.28f;
+
+  computeCircularThumbMouseTarget(rawTargetDxDeg,
+                                  rawTargetDyDeg,
+                                  targetDx,
+                                  targetDy,
+                                  maxStepPerLoop);
+
+  g_thumbMouseFilteredDx += (targetDx - g_thumbMouseFilteredDx) * filterAlpha;
+  g_thumbMouseFilteredDy += (targetDy - g_thumbMouseFilteredDy) * filterAlpha;
+  g_thumbMouseVizDx = -g_thumbMouseFilteredDx * maxStepPerLoop;
+  g_thumbMouseVizDy = -g_thumbMouseFilteredDy * maxStepPerLoop;
+
+  const float dxFloat = g_thumbMouseFilteredDx * maxStepPerLoop + g_thumbMouseResidualDx;
+  const float dyFloat = g_thumbMouseFilteredDy * maxStepPerLoop + g_thumbMouseResidualDy;
+  const int8_t dx = (int8_t)dxFloat;
+  const int8_t dy = (int8_t)dyFloat;
+  g_thumbMouseResidualDx = dxFloat - (float)dx;
+  g_thumbMouseResidualDy = dyFloat - (float)dy;
+  g_isMouseMoving = (dx != 0 || dy != 0 || fabsf(g_thumbMouseVizDx) > 0.25f || fabsf(g_thumbMouseVizDy) > 0.25f);
+
+  if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
+    g_bleMouse.move(-dx, -dy, 0, 0);
+  }
+#elif GAG_ENABLE_IMU_ONLY_MOUSE
   Vec3 linearWorld;
   if (!computeImuOnlyMouseLinearAccelWorld(linearWorld)) {
     resetContinuousThumbMouseControl();
@@ -1099,7 +1148,7 @@ static void updateContinuousThumbMouseControl() {
   }
 
   const float rawTargetDxAccel = linearWorld.x;
-  const float rawTargetDyAccel = -linearWorld.y;
+  const float rawTargetDyAccel = linearWorld.y;
   const float deadzoneAccelG = 0.015f;
   const float fastBandAccelG = 0.06f;
   const float fullScaleAccelG = 0.14f;
@@ -1142,7 +1191,7 @@ static void updateContinuousThumbMouseControl() {
   if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
   }
-#else
+#elif GAG_ENABLE_THUMB_MOUSE_EMULATION
   if (!physicalSensorQuaternionAvailable(SENSOR_THUMB)) {
     resetContinuousThumbMouseControl();
     return;
@@ -1181,6 +1230,8 @@ static void updateContinuousThumbMouseControl() {
   if (g_bleMouseSendEnabled && g_bleMouse.isConnected() && (dx != 0 || dy != 0)) {
     g_bleMouse.move(dx, dy, 0, 0);
   }
+#else
+  resetContinuousThumbMouseControl();
 #endif
 #endif
 }
