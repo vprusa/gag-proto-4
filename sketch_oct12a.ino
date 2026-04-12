@@ -2120,10 +2120,10 @@ static void warmSensorsAfterSoftReset(uint8_t loops = 20) {
   }
 }
 
-static void performSensorSoftRotationReset() {
+static void performSensorHardRotationReset() {
   g_lastSoftSensorResetMs = millis();
-  Serial.println("Soft sensor rotation reset requested.");
-  g_viz.pushLog("SOFT RESET");
+  Serial.println("Hard sensor rotation reset requested.");
+  g_viz.pushLog("HARD RESET");
 
   gag::Quaternion oldMinor[SENSOR_COUNT_ALL];
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
@@ -2133,7 +2133,7 @@ static void performSensorSoftRotationReset() {
   resetSensorRuntimeOrientationState();
   warmSensorsAfterSoftReset(20);
 
-  Serial.println("Soft reset rotation delta:");
+  Serial.println("Hard reset rotation delta:");
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) {
       Serial.printf("sensor=%u label=%s unavailable, keeping previous offset\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
@@ -2162,13 +2162,42 @@ static void performSensorSoftRotationReset() {
   autoCaptureSoftwareNeutralOffsets();
   resetSensorRuntimeOrientationState();
   warmSensorsAfterSoftReset(8);
+  Serial.println("Hard sensor rotation reset finished.");
+}
+
+static void performSensorSoftRotationReset() {
+  g_lastSoftSensorResetMs = millis();
+  Serial.println("Soft sensor rotation reset requested.");
+  g_viz.pushLog("SOFT RESET");
+
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) {
+      Serial.printf("sensor=%u label=%s unavailable, keeping previous software offset\n",
+                    (unsigned)s,
+                    SENSOR_OFFSET_LABELS[s]);
+      continue;
+    }
+
+    const gag::Quaternion currentPhysicalFixed = physicalFixedQuaternionForPhysicalSensor(s);
+    const gag::Quaternion oldSw = g_offsets.softwareQuaternion(s);
+    const gag::Quaternion newSw = gag::offsets::OffsetStore::computeNeutralizingSoftwareOffset(currentPhysicalFixed,
+                                                                                                gag::Quaternion());
+    g_offsets.setSoftwareQuaternion(s, newSw);
+
+    Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
+    printQuaternionWxyz("  physical_fixed = ", currentPhysicalFixed);
+    printQuaternionWxyz("  old_sw         = ", oldSw);
+    printQuaternionWxyz("  new_sw         = ", newSw);
+  }
+
+  resetContinuousThumbMouseControl();
   Serial.println("Soft sensor rotation reset finished.");
 }
 
-static void maybeHandleTtgoLeftButtonSoftReset() {
+static void maybeHandleTtgoLeftButtonHardReset() {
   if (!consumeTtgoLeftButtonPress()) return;
   Serial.println("TTGO left button press detected.");
-  performSensorSoftRotationReset();
+  performSensorHardRotationReset();
 }
 
 static void maybeHandlePeriodicSoftSensorReset() {
@@ -2575,7 +2604,7 @@ void loop() {
   updateVibrations();
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
-  maybeHandleTtgoLeftButtonSoftReset();
+  maybeHandleTtgoLeftButtonHardReset();
   maybeHandlePeriodicSoftSensorReset();
   maybeHandleTtgoRightButtonMouseToggle();
   updateContinuousThumbMouseControl();
