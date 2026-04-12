@@ -116,7 +116,7 @@ static const uint8_t CH_GY511 = 2;
 
 // Per-sensor PCA9548A channel map in logical sensor order:
 // thumb, index, middle, ring, little, wrist GY25, wrist MPU9250, wrist GY-511.
-static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 7, 6, CH_GY25, CH_MPU9250, CH_GY511 };
+static const uint8_t ACTIVE_CHANNELS[SENSOR_COUNT_ALL] = { 0, 3, 4, 6, 7, CH_GY25, CH_MPU9250, CH_GY511 };
 // Enable only the sensors that are physically connected in the current glove.
 static const bool SENSOR_ENABLED[SENSOR_COUNT_ALL] = {
   true,   // thumb
@@ -176,7 +176,7 @@ static uint32_t g_lastSoftSensorResetMs = 0;
 #if GAG_ENABLE_VIBRATION
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {2, 15, 13, 25, 26, 27, 17};
 // static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = {17, 2, 15, 13, 25, 26, 27};
-static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 13, 25, 26, 27, -1 };
+static const int8_t MOTOR_PINS[SENSOR_COUNT_ALL] = { 15, 2, 17, 25, 13, 26, 27, -1 };
 static const bool MOTOR_ACTIVE_HIGH = true;
 struct MotorState {
   bool active = false;
@@ -2493,11 +2493,9 @@ static void addPoseGesture2(const char* name,
     g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
     g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
   }
-  g.perSensor[(uint8_t)sensor].len = 4;
+  g.perSensor[(uint8_t)sensor].len = 2;
   g.perSensor[(uint8_t)sensor].q[0] = target;
-  g.perSensor[(uint8_t)sensor].q[1] = target;
-  g.perSensor[(uint8_t)sensor].q[2] = target2;
-  g.perSensor[(uint8_t)sensor].q[3] = target2;
+  g.perSensor[(uint8_t)sensor].q[1] = target2;
   g_recognizer.addGesture(g);
 }
 
@@ -2533,8 +2531,8 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
-                   18.0f, 320, 900, a, true);
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                   18.0f, 280, 500, a, true);
   }
 
   // Stronger index bend -> second left click for OS-level double click.
@@ -2549,9 +2547,9 @@ static void installDefaultGestures() {
     a.vibrate_duration_ms = 140;
     addPoseGesture2("index_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "DLCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 52.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
-                   16.0f, 320, 900, a, true);
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 60.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -60.0f),
+                   22.0f, 320, 500, a, true);
   }
 
   // Ring bend -> right click.
