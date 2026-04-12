@@ -135,13 +135,19 @@ static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
   return (sensorIdx < 8u) ? (uint8_t)(1u << sensorIdx) : 0u;
 }
 
+// =====================
+// Minimal vector helpers
+// =====================
+struct Vec3 {
+  float x, y, z;
+};
+
 // Choose which physical sensors emit corrected quaternions on Serial.
 // Example:
 //   sensorBitMask(SENSOR_THUMB) | sensorBitMask(SENSOR_INDEX) | sensorBitMask(SENSOR_WRIST_MPU9250)
 static uint8_t g_serialQuatLogSensorMask = 0;
 static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
-static bool g_rightButtonPrevPressed = false;
 static uint32_t g_rightButtonLastTriggerMs = 0;
 static bool g_leftButtonPrevPressed = false;
 static uint32_t g_leftButtonLastTriggerMs = 0;
@@ -150,10 +156,11 @@ static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
 static float g_thumbMouseResidualDx = 0.0f;
 static float g_thumbMouseResidualDy = 0.0f;
+static bool g_rightButtonPrevPressed = false;
 static float g_thumbMouseVizDx = 0.0f;
 static float g_thumbMouseVizDy = 0.0f;
+static Vec3 g_lastAccelBody[SENSOR_COUNT_ALL];
 static bool g_lastAccelBodyValid[SENSOR_COUNT_ALL] = { false };
-st'atic Vec3 g_lastAccelBody[SENSOR_COUNT_ALL];
 static float g_wristGy25RuntimeBiasDegX = 0.0f;
 static float g_wristGy25RuntimeBiasDegY = 0.0f;
 static float g_wristGy25RuntimeBiasDegZ = 0.0f;
@@ -207,13 +214,6 @@ static BleMouse g_bleMouse("GAG Mouse", "GAG", 100);
 #elif GAG_ENABLE_BLE_MOUSE
 static BleMouse g_bleMouse("GAG Mouse", "GAG", 100);
 #endif
-
-// =====================
-// Minimal vector helpers
-// =====================
-struct Vec3 {
-  float x, y, z;
-};
 
 static inline float deg2rad(float d) {
   return d * (float)M_PI / 180.0f;
