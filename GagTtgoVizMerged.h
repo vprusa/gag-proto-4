@@ -58,6 +58,7 @@ struct FrameInput {
   Quaternion hand_sensor_q[8];
   bool present[8];
   uint16_t base_color[8];
+  bool drift_reset_active[8];
   Quaternion hand_wrist_q;
   bool hand_wrist_present;
   bool hand_relative_rotation;
@@ -85,6 +86,7 @@ struct FrameInput {
       hand_sensor_q[i] = Quaternion();
       present[i] = false;
       base_color[i] = TFT_LIGHTGREY;
+      drift_reset_active[i] = false;
     }
   }
 };
@@ -419,8 +421,13 @@ private:
 
         _tft->setTextFont(1);
         _tft->setTextColor(TFT_LIGHTGREY, _bg);
+        const char* label = sensorLabel(idx);
         _tft->setCursor(x0 + 2, y0 + 2);
-        _tft->print(sensorLabel(idx));
+        _tft->print(label);
+        uint8_t labelLen = 0;
+        while (label[labelLen] != 0) ++labelLen;
+        const uint16_t driftDotColor = in.drift_reset_active[idx] ? TFT_RED : TFT_WHITE;
+        _tft->fillCircle(x0 + 6 + (int)labelLen * 6, y0 + 6, 2, driftDotColor);
 
         if (idx < in.sensor_count && in.present[idx]) {
           const uint16_t col = colorForSensor(in, idx, flashActive);

@@ -180,6 +180,7 @@ static uint32_t g_lastSoftSensorResetMs = 0;
 static gag::Quaternion g_driftResetLastPhysicalFixed[SENSOR_COUNT_ALL];
 static bool g_driftResetLastPhysicalFixedValid[SENSOR_COUNT_ALL] = { false };
 static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
+static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
 
 // =====================
@@ -2440,6 +2441,7 @@ static void resetSimultaneousDriftResetTracking(uint8_t sensorMask) {
     g_driftResetLastPhysicalFixed[s] = gag::Quaternion();
     g_driftResetLastPhysicalFixedValid[s] = false;
     g_driftResetStillSinceMs[s] = now;
+    g_driftResetActive[s] = false;
   }
 }
 
@@ -2462,6 +2464,7 @@ static void updateSimultaneousDriftReset() {
   if (blend <= 0.0f) return;
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    g_driftResetActive[s] = false;
     if (((uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_SENSOR_MASK & sensorBitMask(s)) == 0u) continue;
     if (!physicalSensorQuaternionAvailable(s)) {
       g_driftResetLastPhysicalFixedValid[s] = false;
@@ -2493,6 +2496,7 @@ static void updateSimultaneousDriftReset() {
     const gag::Quaternion currentSw = g_offsets.softwareQuaternion(s);
     const gag::Quaternion targetSw = currentPhysicalFixed;
     g_offsets.setSoftwareQuaternion(s, quatNlerp(currentSw, targetSw, blend));
+    g_driftResetActive[s] = true;
   }
 #endif
 }
@@ -2921,6 +2925,7 @@ static gag::viz::FrameInput buildVizFrame() {
     const uint8_t vizIdx = sensorToVizSlot(i);
     frame.base_color[vizIdx] = SENSOR_COLORS[i];
     frame.present[vizIdx] = physicalSensorQuaternionAvailable(i);
+    frame.drift_reset_active[vizIdx] = g_driftResetActive[i];
   }
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
@@ -2964,6 +2969,7 @@ static void resetFusionState() {
     g_driftResetLastPhysicalFixed[i] = gag::Quaternion();
     g_driftResetLastPhysicalFixedValid[i] = false;
     g_driftResetStillSinceMs[i] = now;
+    g_driftResetActive[i] = false;
   }
   wristMagOk = false;
   wristMagRaw = Vec3{ 0, 0, 0 };
