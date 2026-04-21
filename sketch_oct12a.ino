@@ -177,6 +177,10 @@ static float g_wristGy25RuntimeBiasDegZ = 0.0f;
 static uint32_t g_wristGy25StillSinceMs = 0;
 static uint32_t g_lastWristGy25BiasLogMs = 0;
 static uint32_t g_lastSoftSensorResetMs = 0;
+static gag::Quaternion g_driftResetLastPhysicalFixed[SENSOR_COUNT_ALL];
+static bool g_driftResetLastPhysicalFixedValid[SENSOR_COUNT_ALL] = { false };
+static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
+static uint32_t g_lastSimultaneousDriftResetMs = 0;
 
 // =====================
 // Optional vibration motors
@@ -2315,6 +2319,7 @@ static void resetSensorRuntimeOrientationState() {
   g_wristGy25StillSinceMs = 0;
   g_lastWristGy25BiasLogMs = 0;
   g_lastSoftSensorResetMs = now;
+  g_lastSimultaneousDriftResetMs = now;
   resetContinuousThumbMouseControl();
 }
 
@@ -2421,8 +2426,75 @@ static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logTo
   return changedAny;
 }
 
+static void resetSimultaneousDriftResetTracking(uint8_t sensorMask = 0xFFu);
+
 static void performSensorSoftRotationReset() {
   (void)performSensorSoftRotationResetForMask(0xFFu, true);
+  resetSimultaneousDriftResetTracking(0xFFu);
+}
+
+static void resetSimultaneousDriftResetTracking(uint8_t sensorMask) {
+  const uint32_t now = millis();
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if ((sensorMask & sensorBitMask(s)) == 0u) continue;
+    g_driftResetLastPhysicalFixed[s] = gag::Quaternion();
+    g_driftResetLastPhysicalFixedValid[s] = false;
+    g_driftResetStillSinceMs[s] = now;
+  }
+}
+
+static void updateSimultaneousDriftReset() {
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET
+  const uint32_t intervalMs = (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_INTERVAL_MS;
+  if (intervalMs == 0u) return;
+  const uint32_t now = millis();
+  if ((uint32_t)(now - g_lastSimultaneousDriftResetMs) < intervalMs) return;
+
+  const float dtSec = g_lastSimultaneousDriftResetMs == 0u
+                        ? ((float)intervalMs * 0.001f)
+                        : ((float)(uint32_t)(now - g_lastSimultaneousDriftResetMs) * 0.001f);
+  g_lastSimultaneousDriftResetMs = now;
+
+  const float movementThresholdDeg = (float)GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG;
+  const float deadbandDeg = (float)GAG_SIMULTANEOUS_DRIFT_RESET_DEADBAND_DEG;
+  const float maxCorrectionDeg = (float)GAG_SIMULTANEOUS_DRIFT_RESET_MAX_CORRECTION_DEG;
+  const float blend = clamp01((float)GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC * dtSec);
+  if (blend <= 0.0f) return;
+
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    if (((uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_SENSOR_MASK & sensorBitMask(s)) == 0u) continue;
+    if (!physicalSensorQuaternionAvailable(s)) {
+      g_driftResetLastPhysicalFixedValid[s] = false;
+      g_driftResetStillSinceMs[s] = now;
+      continue;
+    }
+
+    const gag::Quaternion currentPhysicalFixed = physicalFixedQuaternionForPhysicalSensor(s);
+    if (!g_driftResetLastPhysicalFixedValid[s]) {
+      g_driftResetLastPhysicalFixed[s] = currentPhysicalFixed;
+      g_driftResetLastPhysicalFixedValid[s] = true;
+      g_driftResetStillSinceMs[s] = now;
+      continue;
+    }
+
+    const float movementDeg = rad2deg(gag::Quaternion::angularDistance(g_driftResetLastPhysicalFixed[s], currentPhysicalFixed));
+    g_driftResetLastPhysicalFixed[s] = currentPhysicalFixed;
+    if (movementDeg > movementThresholdDeg) {
+      g_driftResetStillSinceMs[s] = now;
+      continue;
+    }
+    if ((uint32_t)(now - g_driftResetStillSinceMs[s]) < (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_STILL_MS) continue;
+
+    const gag::Quaternion currentCorrected = g_offsets.applySoftwareOffset(s, currentPhysicalFixed);
+    const float correctionDeg = rad2deg(gag::Quaternion::angularDistance(currentCorrected, gag::Quaternion()));
+    if (correctionDeg <= deadbandDeg) continue;
+    if (maxCorrectionDeg > 0.0f && correctionDeg > maxCorrectionDeg) continue;
+
+    const gag::Quaternion currentSw = g_offsets.softwareQuaternion(s);
+    const gag::Quaternion targetSw = currentPhysicalFixed;
+    g_offsets.setSoftwareQuaternion(s, quatNlerp(currentSw, targetSw, blend));
+  }
+#endif
 }
 
 static void scheduleGestureSoftReset(uint8_t sensorMask, uint32_t dueMs) {
@@ -2459,6 +2531,7 @@ static void processPendingGestureSoftResets() {
     g_pendingGestureSoftResetMask[i] = 0u;
     g_pendingGestureSoftResetDueMs[i] = 0;
     performSensorSoftRotationResetForMask(mask, false);
+    resetSimultaneousDriftResetTracking(mask);
   }
 }
 
@@ -2757,6 +2830,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       scheduleGestureSoftReset(softResetMask, nowMs + gr.softResetDelayMs);
 #else
       performSensorSoftRotationResetForMask(softResetMask, false);
+      resetSimultaneousDriftResetTracking(softResetMask);
 #endif
     }
     if (gr.name && strcmp(gr.name, "index_left_click") == 0) {
@@ -2887,6 +2961,9 @@ static void resetFusionState() {
     g_lastAccelBodyValid[i] = false;
     lastT[i] = now;
     g_lastFifoResetMs[i] = 0;
+    g_driftResetLastPhysicalFixed[i] = gag::Quaternion();
+    g_driftResetLastPhysicalFixedValid[i] = false;
+    g_driftResetStillSinceMs[i] = now;
   }
   wristMagOk = false;
   wristMagRaw = Vec3{ 0, 0, 0 };
@@ -2908,6 +2985,7 @@ static void resetFusionState() {
   g_wristGy25StillSinceMs = 0;
   g_lastWristGy25BiasLogMs = 0;
   g_lastSoftSensorResetMs = now;
+  g_lastSimultaneousDriftResetMs = now;
   resetContinuousThumbMouseControl();
 }
 
@@ -3029,6 +3107,7 @@ void loop() {
   processPendingLeftClick();
   processPendingWristMouseToggleSoftReset();
   processPendingGestureSoftResets();
+  updateSimultaneousDriftReset();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
