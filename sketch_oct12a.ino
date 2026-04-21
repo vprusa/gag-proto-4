@@ -157,6 +157,8 @@ static bool g_wristMouseEmulationEnabled = true;
 static bool g_pendingLeftClick = false;
 static uint32_t g_pendingLeftClickDueMs = 0;
 static uint32_t g_ignoreSingleLeftClickUntilMs = 0;
+static bool g_pendingWristMouseToggleSoftReset = false;
+static uint32_t g_pendingWristMouseToggleSoftResetDueMs = 0;
 static uint32_t g_softResetOperationIndex = 0;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
@@ -2409,6 +2411,20 @@ static void performSensorSoftRotationReset() {
   (void)performSensorSoftRotationResetForMask(0xFFu, true);
 }
 
+static void scheduleWristMouseToggleSoftReset(uint32_t dueMs) {
+  g_pendingWristMouseToggleSoftReset = true;
+  g_pendingWristMouseToggleSoftResetDueMs = dueMs;
+}
+
+static void processPendingWristMouseToggleSoftReset() {
+  if (!g_pendingWristMouseToggleSoftReset) return;
+  const uint32_t now = millis();
+  if ((int32_t)(now - g_pendingWristMouseToggleSoftResetDueMs) < 0) return;
+  g_pendingWristMouseToggleSoftReset = false;
+  g_pendingWristMouseToggleSoftResetDueMs = 0;
+  performSensorSoftRotationReset();
+}
+
 static uint8_t physicalSensorMaskForRecognizerSensor(gag::Sensor sensor) {
   switch (sensor) {
     case gag::Sensor::WRIST:
@@ -2699,6 +2715,9 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
       g_viz.pushLog(g_wristMouseEmulationEnabled ? "WRIST MOUSE ON" : "WRIST MOUSE OFF");
       scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 60 : 120);
+#if GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE
+      scheduleWristMouseToggleSoftReset(nowMs + (uint32_t)GAG_WRIST_MOUSE_TOGGLE_SOFT_RESET_DELAY_MS);
+#endif
     }
     if (gr.action->blink_visualization) {
       g_viz.flash(gr.sensor_mask, gr.action->blink_color565, 180);
@@ -2949,6 +2968,7 @@ void loop() {
   maybeHandleTtgoRightButtonMouseToggle();
   updateContinuousThumbMouseControl();
   processPendingLeftClick();
+  processPendingWristMouseToggleSoftReset();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
