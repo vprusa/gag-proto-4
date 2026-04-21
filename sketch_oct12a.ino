@@ -895,7 +895,18 @@ static void initMotors() {
   }
 }
 
+static void stopAllVibrations() {
+  for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
+    g_motorState[i].active = false;
+    g_motorState[i].until_ms = 0;
+    setMotorOutput(i, false);
+  }
+}
+
 static void scheduleVibration(uint8_t sensorMask, uint16_t durationMs) {
+#if GAG_DISABLE_VIBRATION_WHEN_BLE_SEND_OFF
+  if (!g_bleMouseSendEnabled) return;
+#endif
   const uint32_t until = millis() + durationMs;
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
     if (!(sensorMask & (1u << i))) continue;
@@ -955,6 +966,7 @@ static void runStartupVibrationTest() {
 }
 #else
 static void initMotors() {}
+static void stopAllVibrations() {}
 static void scheduleVibration(uint8_t, uint16_t) {}
 static void updateVibrations() {}
 static void runStartupVibrationTest() {}
@@ -2492,6 +2504,9 @@ static void maybeHandleTtgoRightButtonMouseToggle() {
   g_bleMouseSendEnabled = !g_bleMouseSendEnabled;
   Serial.printf("BLE mouse sending %s.\n", g_bleMouseSendEnabled ? "enabled" : "disabled");
   g_viz.pushLog(g_bleMouseSendEnabled ? "BLE SEND ON" : "BLE SEND OFF");
+#if GAG_DISABLE_VIBRATION_WHEN_BLE_SEND_OFF
+  if (!g_bleMouseSendEnabled) stopAllVibrations();
+#endif
 #else
   Serial.println("BLE mouse support is unavailable at compile time.");
 #endif
