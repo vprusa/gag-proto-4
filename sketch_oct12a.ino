@@ -159,6 +159,8 @@ static uint32_t g_pendingLeftClickDueMs = 0;
 static uint32_t g_ignoreSingleLeftClickUntilMs = 0;
 static bool g_pendingWristMouseToggleSoftReset = false;
 static uint32_t g_pendingWristMouseToggleSoftResetDueMs = 0;
+static uint8_t g_pendingGestureSoftResetMask[GAG_MAX_PENDING_GESTURE_SOFT_RESETS] = { 0 };
+static uint32_t g_pendingGestureSoftResetDueMs[GAG_MAX_PENDING_GESTURE_SOFT_RESETS] = { 0 };
 static uint32_t g_softResetOperationIndex = 0;
 static float g_thumbMouseFilteredDx = 0.0f;
 static float g_thumbMouseFilteredDy = 0.0f;
@@ -2423,6 +2425,43 @@ static void performSensorSoftRotationReset() {
   (void)performSensorSoftRotationResetForMask(0xFFu, true);
 }
 
+static void scheduleGestureSoftReset(uint8_t sensorMask, uint32_t dueMs) {
+  if (sensorMask == 0u) return;
+  for (uint8_t i = 0; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
+    if (g_pendingGestureSoftResetMask[i] != 0u && g_pendingGestureSoftResetDueMs[i] == dueMs) {
+      g_pendingGestureSoftResetMask[i] |= sensorMask;
+      return;
+    }
+  }
+  for (uint8_t i = 0; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
+    if (g_pendingGestureSoftResetMask[i] == 0u) {
+      g_pendingGestureSoftResetMask[i] = sensorMask;
+      g_pendingGestureSoftResetDueMs[i] = dueMs;
+      return;
+    }
+  }
+  uint8_t fallbackIdx = 0u;
+  for (uint8_t i = 1; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
+    if ((int32_t)(g_pendingGestureSoftResetDueMs[i] - g_pendingGestureSoftResetDueMs[fallbackIdx]) > 0) {
+      fallbackIdx = i;
+    }
+  }
+  g_pendingGestureSoftResetMask[fallbackIdx] |= sensorMask;
+  g_pendingGestureSoftResetDueMs[fallbackIdx] = dueMs;
+}
+
+static void processPendingGestureSoftResets() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
+    const uint8_t mask = g_pendingGestureSoftResetMask[i];
+    if (mask == 0u) continue;
+    if ((int32_t)(now - g_pendingGestureSoftResetDueMs[i]) < 0) continue;
+    g_pendingGestureSoftResetMask[i] = 0u;
+    g_pendingGestureSoftResetDueMs[i] = 0;
+    performSensorSoftRotationResetForMask(mask, false);
+  }
+}
+
 static void scheduleWristMouseToggleSoftReset(uint32_t dueMs) {
   g_pendingWristMouseToggleSoftReset = true;
   g_pendingWristMouseToggleSoftResetDueMs = dueMs;
@@ -2600,6 +2639,7 @@ static void addPoseGesture2(const char* name,
   g.softResetLen = 2;
   g.softReset[0] = gag::Sensor::INDEX;
   g.softReset[1] = gag::Sensor::WRIST;
+  g.softResetDelayMs = (uint32_t)GAG_DEFAULT_GESTURE_SOFT_RESET_DELAY_MS;
 
   g.active = true;
   g.action = action;
@@ -2711,6 +2751,14 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 
   if (gr.action) {
     const uint32_t nowMs = millis();
+    const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
+    if (softResetMask != 0u) {
+#if GAG_ENABLE_DELAYED_GESTURE_SOFT_RESET
+      scheduleGestureSoftReset(softResetMask, nowMs + gr.softResetDelayMs);
+#else
+      performSensorSoftRotationResetForMask(softResetMask, false);
+#endif
+    }
     if (gr.name && strcmp(gr.name, "index_left_click") == 0) {
       if ((int32_t)(nowMs - g_ignoreSingleLeftClickUntilMs) < 0) return;
       queuePendingLeftClick(nowMs + 120U);
@@ -2739,10 +2787,6 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
     }
     if (gr.action->vibrate) {
       scheduleVibration(gr.action->vibrate_sensor_mask, gr.action->vibrate_duration_ms);
-    }
-    const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
-    if (softResetMask != 0u) {
-      performSensorSoftRotationResetForMask(softResetMask, false);
     }
     execMouseAction(gr.action->mouse);
   }
@@ -2984,6 +3028,7 @@ void loop() {
   updateContinuousThumbMouseControl();
   processPendingLeftClick();
   processPendingWristMouseToggleSoftReset();
+  processPendingGestureSoftResets();
 
   gag::viz::FrameInput frame = buildVizFrame();
   g_viz.draw(frame);
