@@ -2941,8 +2941,8 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -2954,11 +2954,11 @@ static void installDefaultGestures() {
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_RIGHT;
                        gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
+    addPoseGesture("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                    gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0, 1, 0, 25.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -2997,7 +2997,7 @@ static void installDefaultGestures() {
     addPoseGesture2("little_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "LDCLK",
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -3011,7 +3011,7 @@ static void installDefaultGestures() {
     addPoseGesture2("little_middle_click", "MOUSE_MIDDLE_CLICK", "MCLK",
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -3024,7 +3024,7 @@ static void installDefaultGestures() {
     addPoseGesture("thumb_toggle_wrist_mouse", "TOGGLE_WRIST_MOUSE", "WMOU",
                    gag::Sensor::THUMB,
                    gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -34.0f),
-                   18.0f, 450, 900, a);
+                   18.0f, 450, 900, a, true);
   }
 
   // Thumb mouse movement now uses continuous control driven from the
