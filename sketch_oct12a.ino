@@ -2493,9 +2493,10 @@ static void updateSimultaneousDriftReset() {
     if (correctionDeg <= deadbandDeg) continue;
     if (maxCorrectionDeg > 0.0f && correctionDeg > maxCorrectionDeg) continue;
 
-    const gag::Quaternion currentSw = g_offsets.softwareQuaternion(s);
-    const gag::Quaternion targetSw = currentPhysicalFixed;
-    g_offsets.setSoftwareQuaternion(s, quatNlerp(currentSw, targetSw, blend));
+    const gag::Quaternion currentDefaultFixed = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
+    const gag::Quaternion currentMinor = g_minorRotationOffset[s];
+    const gag::Quaternion targetMinor = computeMinorRotationCompensation(currentDefaultFixed, gag::Quaternion());
+    g_minorRotationOffset[s] = quatNlerp(currentMinor, targetMinor, blend);
     g_driftResetActive[s] = true;
   }
 #endif
