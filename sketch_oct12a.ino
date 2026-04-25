@@ -2843,6 +2843,35 @@ static void addPoseGesture(const char* name,
   g_recognizer.addGesture(g);
 }
 
+static void addPoseGesture1(const char* name,
+                           const char* command,
+                           const char* label,
+                           gag::Sensor sensor,
+                           const gag::Quaternion& target,
+                           float thresholdDeg,
+                           uint32_t cooldownMs,
+                           uint32_t maxTimeMs,
+                           const gag::GestureAction& action,
+                           bool relativeToWrist = false) {
+  gag::GestureDef g;
+  strncpy(g.name, name, sizeof(g.name) - 1);
+  strncpy(g.command, command, sizeof(g.command) - 1);
+  strncpy(g.label, label, sizeof(g.label) - 1);
+  g.threshold_rad = deg2rad(thresholdDeg);
+  g.recognition_delay_ms = cooldownMs;
+  g.max_time_ms = maxTimeMs;
+  g.relative = relativeToWrist;
+  g.active = true;
+  g.action = action;
+  if (relativeToWrist) {
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
+  }
+  g.perSensor[(uint8_t)sensor].len = 1;
+  g.perSensor[(uint8_t)sensor].q[0] = target;
+  g_recognizer.addGesture(g);
+}
+
 static void addPoseGesture2(const char* name,
                            const char* command,
                            const char* label,
@@ -2899,7 +2928,7 @@ static void installDefaultGestures() {
   //                  18.0f, 700, 1200, a);
   // }
 
-  // Index bend -> left click.
+  // Index down -> left click.
   {
     gag::GestureAction a;
     a.blink_visualization = true;
@@ -2911,41 +2940,79 @@ static void installDefaultGestures() {
     a.vibrate_duration_ms = 140;
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
                    15.0f, 250, 300, a, true);
   }
 
-  // Stronger index bend -> second left click for OS-level double click.
-  {
-    gag::GestureAction a;
-    a.blink_visualization = true;
-    a.blink_color565 = TFT_GREEN;
-    a.mouse.type = MouseActionType::DOUBLE_CLICK;
-    a.mouse.button = MOUSE_LEFT;
-    a.vibrate = false;
-    a.vibrate_sensor_mask = (1u << SENSOR_INDEX);
-    a.vibrate_duration_ms = 140;
-    addPoseGesture2("index_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "DLCLK",
-                   gag::Sensor::INDEX,
-                  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -25.0f),
-                   15.0f, 250, 300, a, true);
-  }
-
-  // Ring bend -> right click.
+  // Ring down -> right click, aligned with the left-click angle definition.
   {
     gag::GestureAction a;
     a.blink_visualization = true;
     a.blink_color565 = TFT_MAGENTA;
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_RIGHT;
-    addPoseGesture("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
+                       gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                    gag::Sensor::RING,
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
-                   18.0f, 320, 900, a);
+                   15.0f, 250, 300, a, true);
+  }
+
+  // Middle up/down -> continuous wheel scroll.
+  {
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_CYAN;
+    a.mouse.type = MouseActionType::SCROLL;
+    a.mouse.wheel = 1;
+    addPoseGesture1("middle_scroll_up", "MOUSE_SCROLL_UP", "SCRU",
+                   gag::Sensor::MIDDLE,
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -40.0f),
+                   18.0f, 80, 220, a, true);
+  }
+
+  {
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_CYAN;
+    a.mouse.type = MouseActionType::SCROLL;
+    a.mouse.wheel = -1;
+    addPoseGesture1("middle_scroll_down", "MOUSE_SCROLL_DOWN", "SCRD",
+                   gag::Sensor::MIDDLE,
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
+                   18.0f, 80, 220, a, true);
+  }
+
+  // Little down -> left double click.
+  {
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_GREEN;
+    a.mouse.type = MouseActionType::DOUBLE_CLICK;
+    a.mouse.button = MOUSE_LEFT;
+    addPoseGesture2("little_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "LDCLK",
+                   gag::Sensor::LITTLE,
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                   15.0f, 250, 300, a, true);
+  }
+
+  // Little up -> wheel button click.
+  {
+    gag::GestureAction a;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_ORANGE;
+    a.mouse.type = MouseActionType::CLICK;
+    a.mouse.button = MOUSE_MIDDLE;
+    addPoseGesture2("little_middle_click", "MOUSE_MIDDLE_CLICK", "MCLK",
+                   gag::Sensor::LITTLE,
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
+                   15.0f, 250, 300, a, true);
   }
 
   // Thumb right gesture toggles wrist mouse emulation.
@@ -2986,12 +3053,12 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       resetSimultaneousDriftResetTracking(softResetMask);
 #endif
     }
-    if (gr.name && strcmp(gr.name, "index_left_click") == 0) {
+    if (gr.action->mouse.type == gag::MouseActionType::CLICK && gr.action->mouse.button == MOUSE_LEFT) {
       if ((int32_t)(nowMs - g_ignoreSingleLeftClickUntilMs) < 0) return;
       queuePendingLeftClick(nowMs + 120U);
       return;
     }
-    if (gr.name && strcmp(gr.name, "index_left_double_click") == 0) {
+    if (gr.action->mouse.type == gag::MouseActionType::DOUBLE_CLICK && gr.action->mouse.button == MOUSE_LEFT) {
       clearPendingLeftClick();
       g_ignoreSingleLeftClickUntilMs = nowMs + 220U;
     }
