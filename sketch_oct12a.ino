@@ -187,11 +187,12 @@ static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
 static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
+static bool g_printQuaternionsOnLeftClick = false;
 
 static void syncDriftResetEnableState() {
   const uint32_t now = millis();
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    g_enableDriftReset[s] = !isWristPhysicalSensor(s) || !g_wristMouseEmulationEnabled;
+    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick && (!isWristPhysicalSensor(s) || !g_wristMouseEmulationEnabled);
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
@@ -1113,6 +1114,9 @@ static void execMouseAction(const gag::MouseAction& mouse) {
 static bool physicalSensorQuaternionAvailable(uint8_t sensorIdx);
 static gag::Quaternion correctedQuaternionForPhysicalSensor(uint8_t sensorIdx);
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx);
+static uint8_t selectedWristQuaternionPhysicalSensor();
+static bool selectedWristQuaternionAvailable();
+static gag::Quaternion correctedLogicalWristQuaternion();
 static Vec3 rotateVectorByQuat(const gag::Quaternion& qIn, const Vec3& v);
 
 static void computeCircularThumbMouseTarget(float rawDxDeg,
@@ -1628,8 +1632,8 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
   //   return;
   // }
 
-   if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB) {
-    // Thumb and middle IMUs share a second mounting orientation.
+   if (sensorIdx == SENSOR_MIDDLE || sensorIdx == SENSOR_THUMB || sensorIdx == SENSOR_RING) {
+    // Thumb, middle, and ring IMUs share a second mounting orientation.
     // Serial.println("SENSOR_WRIST_GY25");
     // Serial.println(sensorIdx);
     ax = (int16_t)ayIn;
@@ -2346,6 +2350,101 @@ static void printQuaternionWxyz(const char* prefix, const gag::Quaternion& qIn) 
   Serial.printf("%s{ w=%.5f, x=%.5f, y=%.5f, z=%.5f }\n", prefix, q.w, q.x, q.y, q.z);
 }
 
+static const char* recognizerSensorEnumToken(gag::Sensor sensor) {
+  switch (sensor) {
+    case gag::Sensor::WRIST: return "gag::Sensor::WRIST";
+    case gag::Sensor::THUMB: return "gag::Sensor::THUMB";
+    case gag::Sensor::INDEX: return "gag::Sensor::INDEX";
+    case gag::Sensor::MIDDLE: return "gag::Sensor::MIDDLE";
+    case gag::Sensor::RING: return "gag::Sensor::RING";
+    case gag::Sensor::LITTLE: return "gag::Sensor::LITTLE";
+    default: return "gag::Sensor::WRIST";
+  }
+}
+
+static bool physicalSensorIndexForRecognizerSensor(gag::Sensor sensor, uint8_t& sensorIdx) {
+  switch (sensor) {
+    case gag::Sensor::THUMB: sensorIdx = SENSOR_THUMB; return true;
+    case gag::Sensor::INDEX: sensorIdx = SENSOR_INDEX; return true;
+    case gag::Sensor::MIDDLE: sensorIdx = SENSOR_MIDDLE; return true;
+    case gag::Sensor::RING: sensorIdx = SENSOR_RING; return true;
+    case gag::Sensor::LITTLE: sensorIdx = SENSOR_LITTLE; return true;
+    default: return false;
+  }
+}
+
+static bool capturePoseQuaternionForRecognizerSensor(gag::Sensor sensor,
+                                                     gag::Quaternion& absoluteQ,
+                                                     gag::Quaternion& relativeQ,
+                                                     bool& haveRelative) {
+  haveRelative = false;
+  if (sensor == gag::Sensor::WRIST) {
+    if (!selectedWristQuaternionAvailable()) return false;
+    absoluteQ = correctedLogicalWristQuaternion();
+    relativeQ = absoluteQ;
+    return true;
+  }
+
+  uint8_t sensorIdx = SENSOR_THUMB;
+  if (!physicalSensorIndexForRecognizerSensor(sensor, sensorIdx)) return false;
+  if (!physicalSensorQuaternionAvailable(sensorIdx)) return false;
+
+  absoluteQ = correctedQuaternionForPhysicalSensor(sensorIdx);
+  relativeQ = absoluteQ;
+  if (selectedWristQuaternionAvailable()) {
+    relativeQ = gag::Quaternion::mul(correctedLogicalWristQuaternion().inverseUnit(), absoluteQ);
+    relativeQ.normalizeInPlace();
+    haveRelative = true;
+  }
+  return true;
+}
+
+static void printCapturedAddPoseGestureLine(gag::Sensor sensor, const gag::Quaternion& qIn, bool relativeToWrist) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  Serial.printf("addPoseGesture(\"<name>\", \"<command>\", \"<label>\", %s, gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff), 18.0f, 250, 300, a, %s);\n",
+                recognizerSensorEnumToken(sensor),
+                q.w, q.x, q.y, q.z,
+                relativeToWrist ? "true" : "false");
+}
+
+static void printCapturedGestureQuaternions() {
+  static const gag::Sensor sensors[] = {
+    gag::Sensor::WRIST,
+    gag::Sensor::THUMB,
+    gag::Sensor::INDEX,
+    gag::Sensor::MIDDLE,
+    gag::Sensor::RING,
+    gag::Sensor::LITTLE
+  };
+
+  Serial.println("CAPTURED_GESTURE_QUATERNIONS_BEGIN");
+  if (selectedWristQuaternionAvailable()) {
+    Serial.printf("// logical wrist source: %s\n", SENSOR_OFFSET_LABELS[selectedWristQuaternionPhysicalSensor()]);
+  } else {
+    Serial.println("// logical wrist source unavailable; relative finger captures omitted");
+  }
+
+  for (uint8_t i = 0; i < (sizeof(sensors) / sizeof(sensors[0])); ++i) {
+    gag::Quaternion absoluteQ;
+    gag::Quaternion relativeQ;
+    bool haveRelative = false;
+    const gag::Sensor sensor = sensors[i];
+    if (!capturePoseQuaternionForRecognizerSensor(sensor, absoluteQ, relativeQ, haveRelative)) {
+      Serial.printf("// %s unavailable\n", recognizerSensorEnumToken(sensor));
+      continue;
+    }
+
+    Serial.printf("// %s absolute\n", recognizerSensorEnumToken(sensor));
+    printCapturedAddPoseGestureLine(sensor, absoluteQ, false);
+    if (sensor != gag::Sensor::WRIST && haveRelative) {
+      Serial.printf("// %s relative_to_wrist\n", recognizerSensorEnumToken(sensor));
+      printCapturedAddPoseGestureLine(sensor, relativeQ, true);
+    }
+  }
+  Serial.println("CAPTURED_GESTURE_QUATERNIONS_END");
+}
+
 static void printMinorRotationOffsetArray(const gag::Quaternion* offsets, const char* title) {
   if (title && title[0]) Serial.println(title);
   Serial.println("static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {");
@@ -2730,6 +2829,16 @@ static uint8_t physicalSensorMaskForGestureSoftReset(const gag::RecognizedGestur
 static void maybeHandleTtgoLeftButtonHardReset() {
   if (!consumeTtgoLeftButtonPress()) return;
   Serial.println("TTGO left button press detected.");
+#if GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
+  if (g_printQuaternionsOnLeftClick) {
+    printCapturedGestureQuaternions();
+    g_viz.pushLog("POSE CAPTURED");
+  } else {
+    Serial.println("Quaternion capture is off; left button hard reset is disabled in capture mode.");
+    g_viz.pushLog("POSE CAP OFF");
+  }
+  return;
+#endif
   g_wristMouseEmulationEnabled = false;
   syncDriftResetEnableState();
   clearPendingLeftClick();
@@ -2765,6 +2874,14 @@ static bool consumeTtgoRightButtonPress() {
 static void maybeHandleTtgoRightButtonMouseToggle() {
   if (!consumeTtgoRightButtonPress()) return;
   Serial.println("TTGO right button press detected.");
+#if GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
+  g_printQuaternionsOnLeftClick = !g_printQuaternionsOnLeftClick;
+  syncDriftResetEnableState();
+  clearPendingLeftClick();
+  Serial.printf("Quaternion capture on left click %s.\n",
+                g_printQuaternionsOnLeftClick ? "enabled" : "disabled");
+  g_viz.pushLog(g_printQuaternionsOnLeftClick ? "POSE CAP ON" : "POSE CAP OFF");
+#else
 #if GAG_ENABLE_BLE_MOUSE
   g_bleMouseSendEnabled = !g_bleMouseSendEnabled;
   Serial.printf("BLE mouse sending %s.\n", g_bleMouseSendEnabled ? "enabled" : "disabled");
@@ -2774,6 +2891,7 @@ static void maybeHandleTtgoRightButtonMouseToggle() {
 #endif
 #else
   Serial.println("BLE mouse support is unavailable at compile time.");
+#endif
 #endif
 }
 
@@ -2958,7 +3076,7 @@ static void installDefaultGestures() {
                    gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(0, 1, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                    15.0f, 250, 300, a, true);
   }
 
