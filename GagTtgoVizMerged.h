@@ -167,7 +167,7 @@ public:
   }
 
 private:
-  static constexpr uint8_t kLogLines = 3;
+  static constexpr uint8_t kLogLines = 5;
   static constexpr size_t kLogLineLen = 28;
 
   TFT_eSPI* _tft = nullptr;
