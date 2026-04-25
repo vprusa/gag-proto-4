@@ -2399,13 +2399,11 @@ static bool capturePoseQuaternionForRecognizerSensor(gag::Sensor sensor,
   return true;
 }
 
-static void printCapturedAddPoseGestureLine(gag::Sensor sensor, const gag::Quaternion& qIn, bool relativeToWrist) {
+static void printCapturedQuaternion(const gag::Quaternion& qIn) {
   gag::Quaternion q = qIn;
   q.normalizeInPlace();
-  Serial.printf("addPoseGesture(\"<name>\", \"<command>\", \"<label>\", %s, gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff), 18.0f, 250, 300, a, %s);\n",
-                recognizerSensorEnumToken(sensor),
-                q.w, q.x, q.y, q.z,
-                relativeToWrist ? "true" : "false");
+  Serial.printf("gag::Quaternion(%.8ff, %.8ff, %.8ff, %.8ff)\n",
+                q.w, q.x, q.y, q.z);
 }
 
 static void printCapturedGestureQuaternions() {
@@ -2436,10 +2434,10 @@ static void printCapturedGestureQuaternions() {
     }
 
     Serial.printf("// %s absolute\n", recognizerSensorEnumToken(sensor));
-    printCapturedAddPoseGestureLine(sensor, absoluteQ, false);
+    printCapturedQuaternion(absoluteQ);
     if (sensor != gag::Sensor::WRIST && haveRelative) {
       Serial.printf("// %s relative_to_wrist\n", recognizerSensorEnumToken(sensor));
-      printCapturedAddPoseGestureLine(sensor, relativeQ, true);
+      printCapturedQuaternion(relativeQ);
     }
   }
   Serial.println("CAPTURED_GESTURE_QUATERNIONS_END");
@@ -2458,7 +2456,7 @@ static void printMinorRotationOffsetArray(const gag::Quaternion* offsets, const 
 }
 
 static void maybePrintMinorRotationOffsetCandidates() {
-#if GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES
+#if GAG_PRINT_MINOR_ROTATION_OFFSET_CANDIDATES && !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
   const uint32_t now = millis();
   if ((uint32_t)(now - g_lastMinorRotationOffsetPrintMs) < (uint32_t)GAG_MINOR_ROTATION_OFFSET_PRINT_INTERVAL_MS) return;
   g_lastMinorRotationOffsetPrintMs = now;
@@ -3059,9 +3057,17 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   15.0f, 250, 300, a, true);
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                  // gag::Sensor::INDEX absolute
+                  // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
+                  // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
+                  // gag::Quaternion(0.99992245f, 0.01200788f, -0.00322799f, -0.00076021f),
+                  // gag::Quaternion(0.99992245f, 0.01200788f, -0.00322799f, -0.00076021f),
+                  // gag::Quaternion(0.93727487f, 0.34785417f, 0.01777399f, -0.01404932f)
+                  gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
+                  gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
+                  15.0f, 250, 300, a, true);
   }
 
   // Ring down -> right click, aligned with the left-click angle definition.
@@ -3072,12 +3078,16 @@ static void installDefaultGestures() {
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_RIGHT;
                        gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-    addPoseGesture("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
-                   gag::Sensor::RING,
+    addPoseGesture2("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
+                  gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   15.0f, 250, 300, a, true);
+                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                  // gag::Quaternion(0.91867083f, 0.36967331f, -0.04149037f, -0.13290632f)
+// gag::Sensor::RING relative_to_wrist
+                  gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
+                  gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
+                  15.0f, 250, 300, a, true);
   }
 
   // Middle up/down -> continuous wheel scroll.
@@ -3154,14 +3164,17 @@ static void installDefaultGestures() {
 // =====================
 static void onGestureRecognized(const gag::RecognizedGesture& gr) {
   const char* label = (gr.label && gr.label[0]) ? gr.label : ((gr.name && gr.name[0]) ? gr.name : "GEST");
+#if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
   char logLine[28];
   snprintf(logLine, sizeof(logLine), "%lu %s", (unsigned long)(millis() % 10000UL), label);
   if (!gr.action || gr.action->log_to_history) {
     g_viz.pushLog(logLine);
   }
+#endif
 
   if (gr.action) {
     const uint32_t nowMs = millis();
+#if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
     const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
     if (softResetMask != 0u) {
 #if GAG_ENABLE_DELAYED_GESTURE_SOFT_RESET
@@ -3171,6 +3184,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       resetSimultaneousDriftResetTracking(softResetMask);
 #endif
     }
+#endif
     if (gr.action->mouse.type == gag::MouseActionType::CLICK && gr.action->mouse.button == MOUSE_LEFT) {
       if ((int32_t)(nowMs - g_ignoreSingleLeftClickUntilMs) < 0) return;
       queuePendingLeftClick(nowMs + 120U);
@@ -3189,9 +3203,11 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       clearPendingLeftClick();
       resetContinuousThumbMouseControl();
       Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
+#if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
       g_viz.pushLog(g_wristMouseEmulationEnabled ? "WRIST MOUSE ON" : "WRIST MOUSE OFF");
+#endif
       scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 60 : 120);
-#if GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE
+#if GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE && !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
       scheduleWristMouseToggleSoftReset(nowMs + (uint32_t)GAG_WRIST_MOUSE_TOGGLE_SOFT_RESET_DELAY_MS);
 #endif
     }
@@ -3440,8 +3456,10 @@ void loop() {
   feedRecognizerFromCurrentPose();
 #endif
   updateVibrations();
+#if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
   maybeLogSerialSensorQuaternions();
   maybePrintMinorRotationOffsetCandidates();
+#endif
   maybeHandleTtgoLeftButtonHardReset();
   maybeHandlePeriodicSoftSensorReset();
   maybeHandleTtgoRightButtonMouseToggle();
