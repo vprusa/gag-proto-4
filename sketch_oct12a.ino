@@ -135,6 +135,10 @@ static inline uint8_t sensorBitMask(uint8_t sensorIdx) {
   return (sensorIdx < 8u) ? (uint8_t)(1u << sensorIdx) : 0u;
 }
 
+static inline bool isWristPhysicalSensor(uint8_t sensorIdx) {
+  return sensorIdx == SENSOR_WRIST_GY25 || sensorIdx == SENSOR_WRIST_MPU9250 || sensorIdx == SENSOR_WRIST_GY511;
+}
+
 // =====================
 // Minimal vector helpers
 // =====================
@@ -181,7 +185,20 @@ static gag::Quaternion g_driftResetLastPhysicalFixed[SENSOR_COUNT_ALL];
 static bool g_driftResetLastPhysicalFixedValid[SENSOR_COUNT_ALL] = { false };
 static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
 static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
+static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
+
+static void syncDriftResetEnableState() {
+  const uint32_t now = millis();
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    g_enableDriftReset[s] = !isWristPhysicalSensor(s) || !g_wristMouseEmulationEnabled;
+    if (!g_enableDriftReset[s]) {
+      g_driftResetLastPhysicalFixedValid[s] = false;
+      g_driftResetStillSinceMs[s] = now;
+      g_driftResetActive[s] = false;
+    }
+  }
+}
 
 // =====================
 // Optional vibration motors
@@ -455,6 +472,73 @@ static gag::Quaternion g_minorRotationOffset[SENSOR_COUNT_ALL] = {
   gag::Quaternion(0.45700318f, -0.23116538f, 0.66169173f, -0.54760826f), // wrist GY25
   gag::Quaternion(0.30845252f, 0.77933824f, 0.27591035f, -0.47049168f),   // wrist MPU9250
   gag::Quaternion(0.10031156f, 0.00179863f, 0.99461555f, -0.02596957f),   // wrist GY-511
+};
+
+enum ExpectedSoftResetPoseIndex : uint8_t {
+  EXPECTED_SOFT_RESET_POSE_DEFAULT = 0,
+  EXPECTED_SOFT_RESET_POSE_WRIST_Z_CW_90,
+  EXPECTED_SOFT_RESET_POSE_HAND_DOWN,
+  EXPECTED_SOFT_RESET_POSE_COUNT,
+};
+
+static const char* const EXPECTED_SOFT_RESET_POSE_LABELS[EXPECTED_SOFT_RESET_POSE_COUNT] = {
+  "default",
+  "wrist_z_cw_90",
+  "hand_down",
+};
+
+// Expected corrected orientations used by periodic soft reset.
+// Pose 0 is the current DEFAULT_SENSOR_ROTATION + g_minorRotationOffset neutral,
+// which corresponds to the identity quaternion in corrected space.
+static const gag::Quaternion g_expectedSoftResetRotationDefault[SENSOR_COUNT_ALL] = {
+  gag::Quaternion(), gag::Quaternion(), gag::Quaternion(), gag::Quaternion(),
+  gag::Quaternion(), gag::Quaternion(), gag::Quaternion(), gag::Quaternion(),
+};
+
+// Pose 1: hand rotated 90 deg clockwise around the hand-local Z axis.
+static const gag::Quaternion g_expectedSoftResetRotationWristZClockwise[SENSOR_COUNT_ALL] = {
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+  gag::Quaternion::fromAxisAngleDeg(0.0f, 0.0f, 1.0f, -90.0f),
+};
+
+// Pose 2: hand rotated down alongside the body: Y clockwise, then X clockwise.
+static const gag::Quaternion g_expectedSoftResetRotationHandDown[SENSOR_COUNT_ALL] = {
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+  gag::Quaternion::mul(
+    gag::Quaternion::fromAxisAngleDeg(0.0f, 1.0f, 0.0f, -90.0f),
+    gag::Quaternion::fromAxisAngleDeg(1.0f, 0.0f, 0.0f, -90.0f)),
+};
+
+static const gag::Quaternion* const g_expectedSoftResetRotations[EXPECTED_SOFT_RESET_POSE_COUNT] = {
+  g_expectedSoftResetRotationDefault,
+  g_expectedSoftResetRotationWristZClockwise,
+  g_expectedSoftResetRotationHandDown,
 };
 
 // =====================
@@ -2378,17 +2462,60 @@ static void performSensorHardRotationReset() {
   Serial.println("Hard sensor rotation reset finished.");
 }
 
-static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logToViz = true) {
+static gag::Quaternion expectedSoftResetRotationForPose(uint8_t poseIdx, uint8_t sensorIdx) {
+  if (poseIdx >= (uint8_t)EXPECTED_SOFT_RESET_POSE_COUNT) return gag::Quaternion();
+  if (sensorIdx >= SENSOR_COUNT_ALL) return gag::Quaternion();
+  gag::Quaternion q = g_expectedSoftResetRotations[poseIdx][sensorIdx];
+  q.normalizeInPlace();
+  return q;
+}
+
+static uint8_t selectClosestExpectedSoftResetPose(uint8_t sensorMask) {
+  float bestAverageDeg = 1.0e9f;
+  uint8_t bestPose = (uint8_t)EXPECTED_SOFT_RESET_POSE_DEFAULT;
+
+  for (uint8_t poseIdx = 0; poseIdx < (uint8_t)EXPECTED_SOFT_RESET_POSE_COUNT; ++poseIdx) {
+    float sumDeg = 0.0f;
+    uint8_t sampleCount = 0;
+    for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+      if ((sensorMask & sensorBitMask(s)) == 0u) continue;
+      if (!physicalSensorQuaternionAvailable(s)) continue;
+
+      const gag::Quaternion currentPhysicalFixed = physicalFixedQuaternionForPhysicalSensor(s);
+      const gag::Quaternion expectedRotation = expectedSoftResetRotationForPose(poseIdx, s);
+      sumDeg += rad2deg(gag::Quaternion::angularDistance(currentPhysicalFixed, expectedRotation));
+      ++sampleCount;
+    }
+
+    if (sampleCount == 0u) continue;
+    const float averageDeg = sumDeg / (float)sampleCount;
+    if (averageDeg < bestAverageDeg) {
+      bestAverageDeg = averageDeg;
+      bestPose = poseIdx;
+    }
+  }
+
+  return bestPose;
+}
+
+static bool performSensorSoftRotationResetForMaskToPose(uint8_t sensorMask, uint8_t poseIdx, bool logToViz = true) {
   if (sensorMask == 0u) return false;
+  if (poseIdx >= (uint8_t)EXPECTED_SOFT_RESET_POSE_COUNT) {
+    poseIdx = (uint8_t)EXPECTED_SOFT_RESET_POSE_DEFAULT;
+  }
 
   g_lastSoftSensorResetMs = millis();
   ++g_softResetOperationIndex;
-  Serial.printf("Soft sensor rotation reset requested idx=%lu mask=0x%02X.\n",
+  Serial.printf("Soft sensor rotation reset requested idx=%lu mask=0x%02X pose=%u(%s).\n",
                 (unsigned long)g_softResetOperationIndex,
-                (unsigned)sensorMask);
+                (unsigned)sensorMask,
+                (unsigned)poseIdx,
+                EXPECTED_SOFT_RESET_POSE_LABELS[poseIdx]);
   if (logToViz) {
-    char softResetLog[24];
-    snprintf(softResetLog, sizeof(softResetLog), "%lu SOFT RESET", (unsigned long)g_softResetOperationIndex);
+    char softResetLog[28];
+    snprintf(softResetLog, sizeof(softResetLog), "%lu SOFT %s",
+             (unsigned long)g_softResetOperationIndex,
+             EXPECTED_SOFT_RESET_POSE_LABELS[poseIdx]);
     g_viz.pushLog(softResetLog);
   }
 
@@ -2403,20 +2530,22 @@ static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logTo
     }
 
     const gag::Quaternion currentDefaultFixed = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
+    const gag::Quaternion targetExpectedRotation = expectedSoftResetRotationForPose(poseIdx, s);
     const gag::Quaternion oldMinor = g_minorRotationOffset[s];
     const gag::Quaternion oldSw = g_offsets.softwareQuaternion(s);
-    gag::Quaternion newMinor = computeMinorRotationCompensation(currentDefaultFixed, gag::Quaternion());
+    gag::Quaternion newMinor = computeMinorRotationCompensation(currentDefaultFixed, targetExpectedRotation);
     newMinor.normalizeInPlace();
     g_minorRotationOffset[s] = newMinor;
     g_offsets.setSoftwareQuaternion(s, gag::Quaternion());
     changedAny = true;
 
     Serial.printf("sensor=%u label=%s\n", (unsigned)s, SENSOR_OFFSET_LABELS[s]);
-    printQuaternionWxyz("  default_fixed = ", currentDefaultFixed);
-    printQuaternionWxyz("  old_minor     = ", oldMinor);
-    printQuaternionWxyz("  new_minor     = ", newMinor);
-    printQuaternionWxyz("  old_sw        = ", oldSw);
-    printQuaternionWxyz("  new_sw        = ", gag::Quaternion());
+    printQuaternionWxyz("  default_fixed    = ", currentDefaultFixed);
+    printQuaternionWxyz("  target_expected  = ", targetExpectedRotation);
+    printQuaternionWxyz("  old_minor        = ", oldMinor);
+    printQuaternionWxyz("  new_minor        = ", newMinor);
+    printQuaternionWxyz("  old_sw           = ", oldSw);
+    printQuaternionWxyz("  new_sw           = ", gag::Quaternion());
   }
 
   if (changedAny) {
@@ -2427,10 +2556,23 @@ static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logTo
   return changedAny;
 }
 
+static bool performSensorSoftRotationResetForMask(uint8_t sensorMask, bool logToViz = true) {
+  return performSensorSoftRotationResetForMaskToPose(sensorMask, (uint8_t)EXPECTED_SOFT_RESET_POSE_DEFAULT, logToViz);
+}
+
 static void resetSimultaneousDriftResetTracking(uint8_t sensorMask = 0xFFu);
 
 static void performSensorSoftRotationReset() {
   (void)performSensorSoftRotationResetForMask(0xFFu, true);
+  resetSimultaneousDriftResetTracking(0xFFu);
+}
+
+static void performPeriodicSensorSoftRotationReset() {
+  const uint8_t poseIdx = selectClosestExpectedSoftResetPose(0xFFu);
+  Serial.printf("Periodic soft sensor rotation reset selected pose=%u(%s).\n",
+                (unsigned)poseIdx,
+                EXPECTED_SOFT_RESET_POSE_LABELS[poseIdx]);
+  (void)performSensorSoftRotationResetForMaskToPose(0xFFu, poseIdx, true);
   resetSimultaneousDriftResetTracking(0xFFu);
 }
 
@@ -2466,6 +2608,11 @@ static void updateSimultaneousDriftReset() {
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_driftResetActive[s] = false;
     if (((uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_SENSOR_MASK & sensorBitMask(s)) == 0u) continue;
+    if (!g_enableDriftReset[s]) {
+      g_driftResetLastPhysicalFixedValid[s] = false;
+      g_driftResetStillSinceMs[s] = now;
+      continue;
+    }
     if (!physicalSensorQuaternionAvailable(s)) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
@@ -2584,6 +2731,7 @@ static void maybeHandleTtgoLeftButtonHardReset() {
   if (!consumeTtgoLeftButtonPress()) return;
   Serial.println("TTGO left button press detected.");
   g_wristMouseEmulationEnabled = false;
+  syncDriftResetEnableState();
   clearPendingLeftClick();
   resetContinuousThumbMouseControl();
   g_viz.pushLog("WRIST MOUSE OFF");
@@ -2599,7 +2747,7 @@ static void maybeHandlePeriodicSoftSensorReset() {
   Serial.printf("Periodic soft sensor rotation reset triggered interval_ms=%lu\n",
                 (unsigned long)intervalMs);
   g_viz.pushLog("AUTO RESET");
-  performSensorSoftRotationReset();
+  performPeriodicSensorSoftRotationReset();
 #endif
 }
 
@@ -2852,6 +3000,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
     }
     if (gr.action->toggle_wrist_mouse_emulation) {
       g_wristMouseEmulationEnabled = !g_wristMouseEmulationEnabled;
+      syncDriftResetEnableState();
       clearPendingLeftClick();
       resetContinuousThumbMouseControl();
       Serial.printf("Wrist mouse emulation %s.\n", g_wristMouseEmulationEnabled ? "enabled" : "disabled");
@@ -2983,6 +3132,7 @@ static void resetFusionState() {
   g_lastMinorRotationOffsetPrintMs = 0;
   g_bleMouseSendEnabled = false;
   g_wristMouseEmulationEnabled = true;
+  syncDriftResetEnableState();
   clearPendingLeftClick();
   g_ignoreSingleLeftClickUntilMs = 0;
   g_softResetOperationIndex = 0;
