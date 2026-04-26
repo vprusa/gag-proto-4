@@ -1794,6 +1794,22 @@ static gag::Quaternion correctedLogicalWristQuaternion() {
   return correctedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor());
 }
 
+static gag::Quaternion recognitionQuaternionForPhysicalSensor(uint8_t sensorIdx) {
+#if GAG_ENABLE_RECOGNITION_DRIFT_RESET_OFFSET
+  return correctedQuaternionForPhysicalSensor(sensorIdx);
+#else
+  return physicalFixedQuaternionForPhysicalSensor(sensorIdx);
+#endif
+}
+
+static gag::Quaternion recognitionLogicalWristQuaternion() {
+#if GAG_ENABLE_RECOGNITION_DRIFT_RESET_OFFSET
+  return correctedLogicalWristQuaternion();
+#else
+  return physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor());
+#endif
+}
+
 static uint16_t selectedLogicalWristColor() {
   return SENSOR_COLORS[selectedWristQuaternionPhysicalSensor()];
 }
@@ -2428,7 +2444,7 @@ static bool capturePoseQuaternionForRecognizerSensor(gag::Sensor sensor,
   haveRelative = false;
   if (sensor == gag::Sensor::WRIST) {
     if (!selectedWristQuaternionAvailable()) return false;
-    absoluteQ = correctedLogicalWristQuaternion();
+    absoluteQ = recognitionLogicalWristQuaternion();
     relativeQ = absoluteQ;
     return true;
   }
@@ -2437,10 +2453,10 @@ static bool capturePoseQuaternionForRecognizerSensor(gag::Sensor sensor,
   if (!physicalSensorIndexForRecognizerSensor(sensor, sensorIdx)) return false;
   if (!physicalSensorQuaternionAvailable(sensorIdx)) return false;
 
-  absoluteQ = correctedQuaternionForPhysicalSensor(sensorIdx);
+  absoluteQ = recognitionQuaternionForPhysicalSensor(sensorIdx);
   relativeQ = absoluteQ;
   if (selectedWristQuaternionAvailable()) {
-    relativeQ = gag::Quaternion::mul(correctedLogicalWristQuaternion().inverseUnit(), absoluteQ);
+    relativeQ = gag::Quaternion::mul(recognitionLogicalWristQuaternion().inverseUnit(), absoluteQ);
     relativeQ.normalizeInPlace();
     haveRelative = true;
   }
@@ -3281,12 +3297,12 @@ static void feedRecognizerFromCurrentPose() {
   const uint32_t now = millis();
   for (uint8_t s = SENSOR_THUMB; s <= SENSOR_LITTLE; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
-    gag::Quaternion qCorr = correctedQuaternionForPhysicalSensor(s);
+    gag::Quaternion qCorr = recognitionQuaternionForPhysicalSensor(s);
     g_recognizer.processSample(mapToRecognizerSensor(s), qCorr, now);
   }
 
   if (selectedWristQuaternionAvailable()) {
-    g_recognizer.processSample(gag::Sensor::WRIST, correctedLogicalWristQuaternion(), now);
+    g_recognizer.processSample(gag::Sensor::WRIST, recognitionLogicalWristQuaternion(), now);
   }
 
   // Wrist accel follows the selected/default wrist sensor when available.
