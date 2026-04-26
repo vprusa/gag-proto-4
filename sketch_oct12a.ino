@@ -200,13 +200,16 @@ static gag::Quaternion g_relativeWristNeutralReference[SENSOR_COUNT_ALL];
 static bool g_relativeWristNeutralReferenceValid[SENSOR_COUNT_ALL] = { false };
 static gag::Quaternion g_fingerRelativeDriftOffset[SENSOR_COUNT_ALL];
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
+static uint32_t g_middleScrollDriftResetDisableUntilMs = 0;
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
 static bool g_printQuaternionsOnLeftClick = false;
 
 static void syncDriftResetEnableState() {
   const uint32_t now = millis();
+  const bool middleScrollActive = (int32_t)(now - g_middleScrollDriftResetDisableUntilMs) < 0;
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick;
+    if (middleScrollActive && s == SENSOR_MIDDLE) g_enableDriftReset[s] = false;
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
@@ -3322,6 +3325,10 @@ static void installDefaultGestures() {
 // =====================
 // Gesture callback
 // =====================
+static bool isMiddleScrollGesture(const gag::RecognizedGesture& gr) {
+  return (gr.name && (strcmp(gr.name, "middle_scroll_up") == 0 || strcmp(gr.name, "middle_scroll_down") == 0));
+}
+
 static void onGestureRecognized(const gag::RecognizedGesture& gr) {
   const char* label = (gr.label && gr.label[0]) ? gr.label : ((gr.name && gr.name[0]) ? gr.name : "GEST");
 #if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
@@ -3334,6 +3341,11 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 
   if (gr.action) {
     const uint32_t nowMs = millis();
+    if (isMiddleScrollGesture(gr)) {
+      const uint32_t holdMs = gr.duration_ms > 120u ? gr.duration_ms : 120u;
+      g_middleScrollDriftResetDisableUntilMs = nowMs + holdMs;
+      syncDriftResetEnableState();
+    }
 #if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
     const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
     if (softResetMask != 0u) {
