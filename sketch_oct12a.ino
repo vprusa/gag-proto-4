@@ -139,6 +139,17 @@ static inline bool isWristPhysicalSensor(uint8_t sensorIdx) {
   return sensorIdx == SENSOR_WRIST_GY25 || sensorIdx == SENSOR_WRIST_MPU9250 || sensorIdx == SENSOR_WRIST_GY511;
 }
 
+static inline uint8_t simultaneousDriftResetCompileTimeMask() {
+  return (uint8_t)((GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_THUMB ? sensorBitMask(SENSOR_THUMB) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_INDEX ? sensorBitMask(SENSOR_INDEX) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_MIDDLE ? sensorBitMask(SENSOR_MIDDLE) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_RING ? sensorBitMask(SENSOR_RING) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_LITTLE ? sensorBitMask(SENSOR_LITTLE) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_WRIST_GY25 ? sensorBitMask(SENSOR_WRIST_GY25) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_WRIST_MPU9250 ? sensorBitMask(SENSOR_WRIST_MPU9250) : 0u) |
+                   (GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_SENSOR_WRIST_GY511 ? sensorBitMask(SENSOR_WRIST_GY511) : 0u));
+}
+
 // =====================
 // Minimal vector helpers
 // =====================
@@ -2686,6 +2697,8 @@ static void resetSimultaneousDriftResetTracking(uint8_t sensorMask) {
 
 static void updateSimultaneousDriftReset() {
 #if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET
+  const uint8_t enabledSensorMask = (uint8_t)(simultaneousDriftResetCompileTimeMask() & (uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_SENSOR_MASK);
+  if (enabledSensorMask == 0u) return;
   const uint32_t intervalMs = (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_INTERVAL_MS;
   if (intervalMs == 0u) return;
   const uint32_t now = millis();
@@ -2704,7 +2717,7 @@ static void updateSimultaneousDriftReset() {
 
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_driftResetActive[s] = false;
-    if (((uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_SENSOR_MASK & sensorBitMask(s)) == 0u) continue;
+    if ((enabledSensorMask & sensorBitMask(s)) == 0u) continue;
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
