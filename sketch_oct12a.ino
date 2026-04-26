@@ -198,6 +198,7 @@ static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
 static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
 static gag::Quaternion g_relativeWristNeutralReference[SENSOR_COUNT_ALL];
 static bool g_relativeWristNeutralReferenceValid[SENSOR_COUNT_ALL] = { false };
+static gag::Quaternion g_fingerRelativeDriftOffset[SENSOR_COUNT_ALL];
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
 static bool g_printQuaternionsOnLeftClick = false;
@@ -2408,11 +2409,22 @@ static gag::Quaternion currentRelativeWristQuaternionForFingerSensor(uint8_t sen
   return relQ;
 }
 
-static gag::Quaternion neutralizedRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
+static gag::Quaternion neutralRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
   gag::Quaternion relQ = currentRelativeWristQuaternionForFingerSensor(sensorIdx);
 #if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
   if (sensorIdx < SENSOR_COUNT_FINGERS && g_relativeWristNeutralReferenceValid[sensorIdx]) {
     relQ = gag::Quaternion::mul(relQ, g_relativeWristNeutralReference[sensorIdx].inverseUnit());
+    relQ.normalizeInPlace();
+  }
+#endif
+  return relQ;
+}
+
+static gag::Quaternion correctedRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
+  gag::Quaternion relQ = neutralRelativeWristQuaternionForFingerSensor(sensorIdx);
+#if GAG_ENABLE_FINGER_RELATIVE_DRIFT_RESET_OFFSET
+  if (sensorIdx < SENSOR_COUNT_FINGERS) {
+    relQ = gag::Quaternion::mul(relQ, g_fingerRelativeDriftOffset[sensorIdx].inverseUnit());
     relQ.normalizeInPlace();
   }
 #endif
@@ -2424,6 +2436,7 @@ static void captureRelativeWristNeutralReference() {
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_relativeWristNeutralReference[s] = gag::Quaternion();
     g_relativeWristNeutralReferenceValid[s] = false;
+    g_fingerRelativeDriftOffset[s] = gag::Quaternion();
   }
   if (!selectedWristQuaternionAvailable()) return;
 
@@ -2431,6 +2444,10 @@ static void captureRelativeWristNeutralReference() {
     if (!physicalSensorQuaternionAvailable(s)) continue;
     g_relativeWristNeutralReference[s] = currentRelativeWristQuaternionForFingerSensor(s);
     g_relativeWristNeutralReferenceValid[s] = true;
+  }
+#else
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    g_fingerRelativeDriftOffset[s] = gag::Quaternion();
   }
 #endif
 }
@@ -2846,11 +2863,29 @@ static void updateSimultaneousDriftReset() {
     }
     if ((uint32_t)(now - g_driftResetStillSinceMs[s]) < (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_STILL_MS) continue;
 
-    const gag::Quaternion currentRelative = neutralizedRelativeWristQuaternionForFingerSensor(s);
-    const gag::Quaternion currentCorrected = (s < SENSOR_COUNT_FINGERS) ? currentRelative : simultaneousDriftResetCorrectedQuaternionForSensor(s);
+    gag::Quaternion currentCorrected = simultaneousDriftResetCorrectedQuaternionForSensor(s);
+#if GAG_ENABLE_FINGER_RELATIVE_DRIFT_RESET_OFFSET
+    if (s < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
+      currentCorrected = correctedRelativeWristQuaternionForFingerSensor(s);
+    }
+#else
+    if (s < SENSOR_COUNT_FINGERS) {
+      currentCorrected = neutralRelativeWristQuaternionForFingerSensor(s);
+    }
+#endif
     const float correctionDeg = rad2deg(gag::Quaternion::angularDistance(currentCorrected, gag::Quaternion()));
     if (correctionDeg <= deadbandDeg) continue;
     if (maxCorrectionDeg > 0.0f && correctionDeg > maxCorrectionDeg) continue;
+
+#if GAG_ENABLE_FINGER_RELATIVE_DRIFT_RESET_OFFSET
+    if (s < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
+      const gag::Quaternion currentRelativeNeutral = neutralRelativeWristQuaternionForFingerSensor(s);
+      const gag::Quaternion currentRelativeOffset = g_fingerRelativeDriftOffset[s];
+      g_fingerRelativeDriftOffset[s] = quatNlerp(currentRelativeOffset, currentRelativeNeutral, blend);
+      g_driftResetActive[s] = true;
+      continue;
+    }
+#endif
 
     const gag::Quaternion currentDefaultFixed = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
     const gag::Quaternion currentMinor = g_minorRotationOffset[s];
@@ -3398,10 +3433,10 @@ static gag::viz::FrameInput buildVizFrame() {
     if (!physicalSensorQuaternionAvailable(s)) continue;
     const uint8_t vizIdx = sensorToVizSlot(s);
     frame.sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_CUBES_RELATIVE_ROTATION)
-                               ? neutralizedRelativeWristQuaternionForFingerSensor(s)
+                               ? correctedRelativeWristQuaternionForFingerSensor(s)
                                : correctedQuaternionForPhysicalSensor(s);
     frame.hand_sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_HAND_RELATIVE_ROTATION)
-                                    ? neutralizedRelativeWristQuaternionForFingerSensor(s)
+                                    ? correctedRelativeWristQuaternionForFingerSensor(s)
                                     : correctedQuaternionForPhysicalSensor(s);
   }
 
