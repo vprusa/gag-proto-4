@@ -203,7 +203,7 @@ static bool g_printQuaternionsOnLeftClick = false;
 static void syncDriftResetEnableState() {
   const uint32_t now = millis();
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick && (!isWristPhysicalSensor(s) || !g_wristMouseEmulationEnabled);
+    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick;
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
@@ -2355,6 +2355,43 @@ static gag::Quaternion computeMinorRotationCompensation(const gag::Quaternion& c
   return out;
 }
 
+static gag::Quaternion simultaneousDriftResetTrackingQuaternionForSensor(uint8_t sensorIdx) {
+  gag::Quaternion q = physicalFixedQuaternionForPhysicalSensor(sensorIdx);
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
+  if (sensorIdx < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
+    q = gag::Quaternion::mul(physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor()).inverseUnit(), q);
+    q.normalizeInPlace();
+  }
+#endif
+  return q;
+}
+
+static gag::Quaternion simultaneousDriftResetCorrectedQuaternionForSensor(uint8_t sensorIdx) {
+  gag::Quaternion q = correctedQuaternionForPhysicalSensor(sensorIdx);
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
+  if (sensorIdx < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
+    q = gag::Quaternion::mul(correctedLogicalWristQuaternion().inverseUnit(), q);
+    q.normalizeInPlace();
+  }
+#endif
+  return q;
+}
+
+static gag::Quaternion simultaneousDriftResetTargetMinorForSensor(uint8_t sensorIdx,
+                                                                  const gag::Quaternion& currentDefaultFixed) {
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
+  if (sensorIdx < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
+    gag::Quaternion targetPhysical = gag::Quaternion::mul(g_offsets.softwareQuaternion(sensorIdx),
+                                                          correctedLogicalWristQuaternion());
+    targetPhysical.normalizeInPlace();
+    return computeMinorRotationCompensation(currentDefaultFixed, targetPhysical);
+  }
+#else
+  (void)sensorIdx;
+#endif
+  return computeMinorRotationCompensation(currentDefaultFixed, gag::Quaternion());
+}
+
 static void printQuaternionWxyz(const char* prefix, const gag::Quaternion& qIn) {
   gag::Quaternion q = qIn;
   q.normalizeInPlace();
@@ -2729,30 +2766,30 @@ static void updateSimultaneousDriftReset() {
       continue;
     }
 
-    const gag::Quaternion currentPhysicalFixed = physicalFixedQuaternionForPhysicalSensor(s);
+    const gag::Quaternion currentTrackingQuaternion = simultaneousDriftResetTrackingQuaternionForSensor(s);
     if (!g_driftResetLastPhysicalFixedValid[s]) {
-      g_driftResetLastPhysicalFixed[s] = currentPhysicalFixed;
+      g_driftResetLastPhysicalFixed[s] = currentTrackingQuaternion;
       g_driftResetLastPhysicalFixedValid[s] = true;
       g_driftResetStillSinceMs[s] = now;
       continue;
     }
 
-    const float movementDeg = rad2deg(gag::Quaternion::angularDistance(g_driftResetLastPhysicalFixed[s], currentPhysicalFixed));
-    g_driftResetLastPhysicalFixed[s] = currentPhysicalFixed;
+    const float movementDeg = rad2deg(gag::Quaternion::angularDistance(g_driftResetLastPhysicalFixed[s], currentTrackingQuaternion));
+    g_driftResetLastPhysicalFixed[s] = currentTrackingQuaternion;
     if (movementDeg > movementThresholdDeg) {
       g_driftResetStillSinceMs[s] = now;
       continue;
     }
     if ((uint32_t)(now - g_driftResetStillSinceMs[s]) < (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_STILL_MS) continue;
 
-    const gag::Quaternion currentCorrected = g_offsets.applySoftwareOffset(s, currentPhysicalFixed);
+    const gag::Quaternion currentCorrected = simultaneousDriftResetCorrectedQuaternionForSensor(s);
     const float correctionDeg = rad2deg(gag::Quaternion::angularDistance(currentCorrected, gag::Quaternion()));
     if (correctionDeg <= deadbandDeg) continue;
     if (maxCorrectionDeg > 0.0f && correctionDeg > maxCorrectionDeg) continue;
 
     const gag::Quaternion currentDefaultFixed = applyDefaultSensorRotation(s, rawQuaternionForPhysicalSensor(s));
     const gag::Quaternion currentMinor = g_minorRotationOffset[s];
-    const gag::Quaternion targetMinor = computeMinorRotationCompensation(currentDefaultFixed, gag::Quaternion());
+    const gag::Quaternion targetMinor = simultaneousDriftResetTargetMinorForSensor(s, currentDefaultFixed);
     g_minorRotationOffset[s] = quatNlerp(currentMinor, targetMinor, blend);
     g_driftResetActive[s] = true;
   }
