@@ -60,6 +60,7 @@ struct FrameInput {
   uint16_t base_color[8];
   bool drift_reset_active[8];
   Quaternion hand_wrist_q;
+  Quaternion hand_wrist_reference_q;
   bool hand_wrist_present;
   bool hand_relative_rotation;
   bool cube_relative_rotation;
@@ -72,6 +73,7 @@ struct FrameInput {
 
   FrameInput()
     : hand_wrist_q(),
+      hand_wrist_reference_q(),
       hand_wrist_present(false),
       hand_relative_rotation(true),
       cube_relative_rotation(false),
@@ -304,6 +306,9 @@ private:
     const Quaternion qWrist = in.hand_wrist_present
       ? in.hand_wrist_q
       : (in.present[0] ? in.sensor_q[0] : Quaternion());
+    const Quaternion qWristRef = in.hand_wrist_present
+      ? in.hand_wrist_reference_q
+      : qWrist;
 
     const Vec3 wrist = v3(0.0f, 0.0f, 0.0f);
     const Vec3 bases[5] = {
@@ -338,7 +343,7 @@ private:
       if (in.present[sensorIdx]) {
         qPose = in.hand_sensor_q[sensorIdx];
         if (in.hand_relative_rotation) {
-          qPose = Quaternion::mul(qWrist.inverseUnit(), qPose);
+          qPose = Quaternion::mul(qWristRef.inverseUnit(), qPose);
         }
         qPose.normalizeInPlace();
       }
@@ -433,7 +438,7 @@ private:
           const uint16_t col = colorForSensor(in, idx, flashActive);
           Quaternion qDraw = in.sensor_q[idx];
           if (in.cube_relative_rotation && idx >= 1 && idx <= 5 && in.hand_wrist_present) {
-            qDraw = Quaternion::mul(in.hand_wrist_q.inverseUnit(), qDraw);
+            qDraw = Quaternion::mul(in.hand_wrist_reference_q.inverseUnit(), qDraw);
             qDraw.normalizeInPlace();
           }
           drawCubeWire(cx, cy + 3, half, qDraw, col);

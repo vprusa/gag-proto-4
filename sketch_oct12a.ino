@@ -196,6 +196,8 @@ static gag::Quaternion g_driftResetLastPhysicalFixed[SENSOR_COUNT_ALL];
 static bool g_driftResetLastPhysicalFixedValid[SENSOR_COUNT_ALL] = { false };
 static uint32_t g_driftResetStillSinceMs[SENSOR_COUNT_ALL] = { 0 };
 static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
+static gag::Quaternion g_relativeWristNeutralReference[SENSOR_COUNT_ALL];
+static bool g_relativeWristNeutralReferenceValid[SENSOR_COUNT_ALL] = { false };
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
 static bool g_printQuaternionsOnLeftClick = false;
@@ -1657,13 +1659,14 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
   }
 
   if (sensorIdx == SENSOR_WRIST_MPU9250) {
-    // Wrist MPU9250 has its own mounting orientation.
+    // Wrist MPU9250 has its own mounting orientation. Keep the remap
+    // right-handed; quaternion fusion cannot represent reflections.
     ax = (int16_t)-azIn;
     ay = (int16_t)-ayIn;
-    az = (int16_t)axIn;
+    az = (int16_t)-axIn;
     gx = (int16_t)-gzIn;
     gy = (int16_t)-gyIn;
-    gz = (int16_t)gxIn;
+    gz = (int16_t)-gxIn;
     return;
   }
 
@@ -1680,13 +1683,14 @@ static void remapMpuRawAxesToGloveFrame(uint8_t sensorIdx,
     return;
   }
   
-  // Default mapping for the remaining MPU6050-class modules in the current glove build.
+  // Default mapping for the remaining MPU6050-class modules in the
+  // current glove build. Keep this remap right-handed as well.
   ax = azIn;
   ay = ayIn;
-  az = axIn;
+  az = (int16_t)-axIn;
   gx = gzIn;
   gy = gyIn;
-  gz = gxIn;
+  gz = (int16_t)-gxIn;
 }
 
 static gag::Quaternion rawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
@@ -2393,12 +2397,54 @@ static gag::Quaternion simultaneousDriftResetCorrectedQuaternionForSensor(uint8_
   return q;
 }
 
+static gag::Quaternion currentRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
+  gag::Quaternion relQ;
+  if (sensorIdx >= SENSOR_COUNT_FINGERS || !selectedWristQuaternionAvailable() || !physicalSensorQuaternionAvailable(sensorIdx)) {
+    return relQ;
+  }
+  relQ = gag::Quaternion::mul(physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor()).inverseUnit(),
+                              physicalFixedQuaternionForPhysicalSensor(sensorIdx));
+  relQ.normalizeInPlace();
+  return relQ;
+}
+
+static gag::Quaternion neutralizedRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
+  gag::Quaternion relQ = currentRelativeWristQuaternionForFingerSensor(sensorIdx);
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
+  if (sensorIdx < SENSOR_COUNT_FINGERS && g_relativeWristNeutralReferenceValid[sensorIdx]) {
+    relQ = gag::Quaternion::mul(relQ, g_relativeWristNeutralReference[sensorIdx].inverseUnit());
+    relQ.normalizeInPlace();
+  }
+#endif
+  return relQ;
+}
+
+static void captureRelativeWristNeutralReference() {
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
+  for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
+    g_relativeWristNeutralReference[s] = gag::Quaternion();
+    g_relativeWristNeutralReferenceValid[s] = false;
+  }
+  if (!selectedWristQuaternionAvailable()) return;
+
+  for (uint8_t s = 0; s < SENSOR_COUNT_FINGERS; ++s) {
+    if (!physicalSensorQuaternionAvailable(s)) continue;
+    g_relativeWristNeutralReference[s] = currentRelativeWristQuaternionForFingerSensor(s);
+    g_relativeWristNeutralReferenceValid[s] = true;
+  }
+#endif
+}
+
 static gag::Quaternion simultaneousDriftResetTargetMinorForSensor(uint8_t sensorIdx,
                                                                   const gag::Quaternion& currentDefaultFixed) {
 #if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
   if (sensorIdx < SENSOR_COUNT_FINGERS && selectedWristQuaternionAvailable()) {
-    gag::Quaternion targetPhysical = gag::Quaternion::mul(g_offsets.softwareQuaternion(sensorIdx),
-                                                          correctedLogicalWristQuaternion());
+    gag::Quaternion targetRelative = gag::Quaternion();
+    if (g_relativeWristNeutralReferenceValid[sensorIdx]) {
+      targetRelative = g_relativeWristNeutralReference[sensorIdx];
+    }
+    gag::Quaternion targetPhysical = gag::Quaternion::mul(physicalFixedQuaternionForPhysicalSensor(selectedWristQuaternionPhysicalSensor()),
+                                                          targetRelative);
     targetPhysical.normalizeInPlace();
     return computeMinorRotationCompensation(currentDefaultFixed, targetPhysical);
   }
@@ -2618,6 +2664,7 @@ static void performSensorHardRotationReset() {
 
   printMinorRotationOffsetArray(g_minorRotationOffset, "Updated minor rotation offsets:");
   autoCaptureSoftwareNeutralOffsets();
+  captureRelativeWristNeutralReference();
   resetSensorRuntimeOrientationState();
   warmSensorsAfterSoftReset(8);
   Serial.println("Hard sensor rotation reset finished.");
@@ -2710,6 +2757,7 @@ static bool performSensorSoftRotationResetForMaskToPose(uint8_t sensorMask, uint
   }
 
   if (changedAny) {
+    captureRelativeWristNeutralReference();
     clearPendingLeftClick();
     resetContinuousThumbMouseControl();
   }
@@ -2798,7 +2846,8 @@ static void updateSimultaneousDriftReset() {
     }
     if ((uint32_t)(now - g_driftResetStillSinceMs[s]) < (uint32_t)GAG_SIMULTANEOUS_DRIFT_RESET_STILL_MS) continue;
 
-    const gag::Quaternion currentCorrected = simultaneousDriftResetCorrectedQuaternionForSensor(s);
+    const gag::Quaternion currentRelative = neutralizedRelativeWristQuaternionForFingerSensor(s);
+    const gag::Quaternion currentCorrected = (s < SENSOR_COUNT_FINGERS) ? currentRelative : simultaneousDriftResetCorrectedQuaternionForSensor(s);
     const float correctionDeg = rad2deg(gag::Quaternion::angularDistance(currentCorrected, gag::Quaternion()));
     if (correctionDeg <= deadbandDeg) continue;
     if (maxCorrectionDeg > 0.0f && correctionDeg > maxCorrectionDeg) continue;
@@ -3348,18 +3397,17 @@ static gag::viz::FrameInput buildVizFrame() {
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
     const uint8_t vizIdx = sensorToVizSlot(s);
-    frame.sensor_q[vizIdx] = GAG_VIZ_CUBES_RELATIVE_ROTATION
-                               ? physicalFixedQuaternionForPhysicalSensor(s)
+    frame.sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_CUBES_RELATIVE_ROTATION)
+                               ? neutralizedRelativeWristQuaternionForFingerSensor(s)
                                : correctedQuaternionForPhysicalSensor(s);
-    frame.hand_sensor_q[vizIdx] = GAG_VIZ_HAND_RELATIVE_ROTATION
-                                    ? physicalFixedQuaternionForPhysicalSensor(s)
+    frame.hand_sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_HAND_RELATIVE_ROTATION)
+                                    ? neutralizedRelativeWristQuaternionForFingerSensor(s)
                                     : correctedQuaternionForPhysicalSensor(s);
   }
 
   const uint8_t wristSensor = selectedWristQuaternionPhysicalSensor();
-  const gag::Quaternion wristBaseQ = (GAG_VIZ_HAND_RELATIVE_ROTATION || GAG_VIZ_CUBES_RELATIVE_ROTATION)
-                                       ? physicalFixedQuaternionForPhysicalSensor(wristSensor)
-                                       : correctedLogicalWristQuaternion();
+  const gag::Quaternion wristBaseQ = correctedLogicalWristQuaternion();
+  frame.hand_wrist_reference_q = (GAG_VIZ_HAND_RELATIVE_ROTATION || GAG_VIZ_CUBES_RELATIVE_ROTATION) ? gag::Quaternion() : wristBaseQ;
   frame.hand_wrist_q = applyWristPivotRotationCorrection(wristSensor, wristBaseQ);
   frame.hand_wrist_present = selectedWristQuaternionAvailable();
   frame.hand_wrist_color = selectedLogicalWristColor();
@@ -3473,6 +3521,7 @@ static void initializeGloveRuntime(bool coldBootLog) {
   captureMinorRotationOffsetsAtBoot();
   printRotationOffsetsAtBoot();
   autoCaptureSoftwareNeutralOffsets();
+  captureRelativeWristNeutralReference();
 
 #if GAG_ENABLE_RECOGNITION
   g_recognizer.begin(Serial);
