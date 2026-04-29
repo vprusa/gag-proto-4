@@ -431,6 +431,8 @@ struct GestureDef {
   uint8_t softResetLen = 0;
   Sensor softReset[static_cast<uint8_t>(Sensor::COUNT)] = {};
   uint32_t softResetDelayMs = 100U;
+  bool blockDriftResetDuringAction = false;
+  uint32_t driftResetBlockMs = 0U;
   GestureAction action;
 
   inline uint8_t requiredSensorMask() const {
@@ -486,6 +488,8 @@ struct RecognizedGesture {
   uint8_t softResetLen = 0;
   Sensor softReset[static_cast<uint8_t>(Sensor::COUNT)] = {};
   uint32_t softResetDelayMs = 100U;
+  bool blockDriftResetDuringAction = false;
+  uint32_t driftResetBlockMs = 0U;
   uint32_t start_ms = 0;
   uint32_t end_ms = 0;
   uint32_t duration_ms = 0;
@@ -815,6 +819,8 @@ private:
     rg.sensor_mask = g.sensorMask();
     rg.softResetLen = g.softResetLen;
     rg.softResetDelayMs = g.softResetDelayMs;
+    rg.blockDriftResetDuringAction = g.blockDriftResetDuringAction;
+    rg.driftResetBlockMs = g.driftResetBlockMs;
     for (uint8_t i = 0; i < g.softResetLen && i < static_cast<uint8_t>(Sensor::COUNT); ++i) {
       rg.softReset[i] = g.softReset[i];
     }

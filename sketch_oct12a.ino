@@ -222,19 +222,35 @@ static gag::Quaternion g_fingerConstraintPrevRawRelative[SENSOR_COUNT_FINGERS];
 static gag::Quaternion g_fingerConstraintPrevCorrectedRelative[SENSOR_COUNT_FINGERS];
 static bool g_fingerConstraintPrevValid[SENSOR_COUNT_FINGERS] = { false, false, false, false, false };
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
+static uint32_t g_driftResetBlockedUntilMs = 0;
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
 static bool g_printQuaternionsOnLeftClick = false;
 
 static void syncDriftResetEnableState() {
   const uint32_t now = millis();
+  const bool gestureCooldownActive = (int32_t)(now - g_driftResetBlockedUntilMs) < 0;
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick;
+    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick && !gestureCooldownActive;
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
       g_driftResetActive[s] = false;
     }
   }
+}
+
+static void blockDriftResetForGestureAction(uint32_t nowMs, uint32_t blockMs) {
+#if GAG_ENABLE_GESTURE_DRIFT_RESET_COOLDOWN
+  if (blockMs == 0u) blockMs = (uint32_t)GAG_DEFAULT_GESTURE_DRIFT_RESET_BLOCK_MS;
+  const uint32_t untilMs = nowMs + blockMs;
+  if ((int32_t)(untilMs - g_driftResetBlockedUntilMs) > 0) {
+    g_driftResetBlockedUntilMs = untilMs;
+  }
+  syncDriftResetEnableState();
+#else
+  (void)nowMs;
+  (void)blockMs;
+#endif
 }
 
 // =====================
@@ -2809,6 +2825,7 @@ static void resetSensorRuntimeOrientationState() {
   g_lastWristGy25BiasLogMs = 0;
   g_lastSoftSensorResetMs = now;
   g_lastSimultaneousDriftResetMs = now;
+  g_driftResetBlockedUntilMs = 0;
   resetFingerConstraintTracking();
   resetContinuousThumbMouseControl();
 }
@@ -3433,10 +3450,23 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_CYAN;
     a.mouse.type = MouseActionType::SCROLL;
     a.mouse.wheel = 1;
-    addPoseGesture1("middle_scroll_up", "MOUSE_SCROLL_UP", "SCRU",
-                   gag::Sensor::MIDDLE,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -40.0f),
-                   18.0f, 80, 220, a, true);
+    gag::GestureDef g;
+    strncpy(g.name, "middle_scroll_up", sizeof(g.name) - 1);
+    strncpy(g.command, "MOUSE_SCROLL_UP", sizeof(g.command) - 1);
+    strncpy(g.label, "SCRU", sizeof(g.label) - 1);
+    g.threshold_rad = deg2rad(18.0f);
+    g.recognition_delay_ms = 80;
+    g.max_time_ms = 220;
+    g.relative = true;
+    g.active = true;
+    g.action = a;
+    g.blockDriftResetDuringAction = true;
+    g.driftResetBlockMs = (uint32_t)GAG_DEFAULT_GESTURE_DRIFT_RESET_BLOCK_MS;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
+    g.perSensor[(uint8_t)gag::Sensor::MIDDLE].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::MIDDLE].q[0] = gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -40.0f);
+    g_recognizer.addGesture(g);
   }
 
   {
@@ -3445,10 +3475,23 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_CYAN;
     a.mouse.type = MouseActionType::SCROLL;
     a.mouse.wheel = -1;
-    addPoseGesture1("middle_scroll_down", "MOUSE_SCROLL_DOWN", "SCRD",
-                   gag::Sensor::MIDDLE,
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
-                   18.0f, 80, 220, a, true);
+    gag::GestureDef g;
+    strncpy(g.name, "middle_scroll_down", sizeof(g.name) - 1);
+    strncpy(g.command, "MOUSE_SCROLL_DOWN", sizeof(g.command) - 1);
+    strncpy(g.label, "SCRD", sizeof(g.label) - 1);
+    g.threshold_rad = deg2rad(18.0f);
+    g.recognition_delay_ms = 80;
+    g.max_time_ms = 220;
+    g.relative = true;
+    g.active = true;
+    g.action = a;
+    g.blockDriftResetDuringAction = true;
+    g.driftResetBlockMs = (uint32_t)GAG_DEFAULT_GESTURE_DRIFT_RESET_BLOCK_MS;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::WRIST].q[0] = gag::Quaternion();
+    g.perSensor[(uint8_t)gag::Sensor::MIDDLE].len = 1;
+    g.perSensor[(uint8_t)gag::Sensor::MIDDLE].q[0] = gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f);
+    g_recognizer.addGesture(g);
   }
 
   // Little down -> left double click.
@@ -3510,6 +3553,9 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
 
   if (gr.action) {
     const uint32_t nowMs = millis();
+    if (gr.blockDriftResetDuringAction) {
+      blockDriftResetForGestureAction(nowMs, gr.driftResetBlockMs);
+    }
 #if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
     const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
     if (softResetMask != 0u) {
