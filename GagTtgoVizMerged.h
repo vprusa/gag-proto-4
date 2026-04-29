@@ -12,6 +12,11 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <TFT_eSPI.h>
+
+#ifndef GAG_ENABLE_RAW_CUBES_VISUALIZATION
+#define GAG_ENABLE_RAW_CUBES_VISUALIZATION 0
+#endif
+
 #include "GagRecogMerged.h"
 
 namespace gag {
@@ -55,6 +60,7 @@ enum Mode : uint8_t {
 
 struct FrameInput {
   Quaternion sensor_q[8];
+  Quaternion raw_sensor_q[8];
   Quaternion hand_sensor_q[8];
   bool present[8];
   uint16_t base_color[8];
@@ -85,6 +91,7 @@ struct FrameInput {
       sensor_count(0) {
     for (uint8_t i = 0; i < 8; ++i) {
       sensor_q[i] = Quaternion();
+      raw_sensor_q[i] = Quaternion();
       hand_sensor_q[i] = Quaternion();
       present[i] = false;
       base_color[i] = TFT_LIGHTGREY;
@@ -149,8 +156,18 @@ public:
     const int skeletonTop = 0;
     const int skeletonH   = 72;
     const int cubesTop    = skeletonTop + skeletonH;
-    const int cubesH      = 80;
-    const int logTop      = cubesTop + cubesH;
+    const int logMinH     = 32;
+#if GAG_ENABLE_RAW_CUBES_VISUALIZATION
+    const int cubeGridCount = 2;
+#else
+    const int cubeGridCount = 1;
+#endif
+    int cubesAreaH = (int)H - cubesTop - logMinH;
+    if (cubesAreaH < cubeGridCount * 24) cubesAreaH = cubeGridCount * 24;
+    const int cubesH = cubesAreaH / cubeGridCount;
+    const int rawCubesTop = cubesTop + cubesH;
+    const int rawCubesH = cubesAreaH - cubesH;
+    const int logTop = cubesTop + cubesAreaH;
     const int logH        = H - logTop;
 
     if (_mode == MODE_FULL || _mode == MODE_SKELETON_ONLY) {
@@ -159,7 +176,10 @@ public:
     }
 
     if (_mode == MODE_FULL || _mode == MODE_CUBES_ONLY) {
-      drawCubeGrid(in, 0, cubesTop, W, cubesH, flashActive, blinkOn);
+      drawCubeGrid(in, in.sensor_q, 0, cubesTop, W, cubesH, flashActive, blinkOn);
+#if GAG_ENABLE_RAW_CUBES_VISUALIZATION
+      drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, "RAW");
+#endif
       drawModeBadge(W - 54, 2);
     }
 
@@ -407,17 +427,33 @@ private:
     }
   }
 
-  void drawCubeGrid(const FrameInput& in, int x, int y, int w, int h, bool flashActive, bool blinkOn) {
+  void drawCubeGrid(const FrameInput& in,
+                    const Quaternion* qSet,
+                    int x,
+                    int y,
+                    int w,
+                    int h,
+                    bool flashActive,
+                    bool blinkOn,
+                    const char* title = nullptr) {
     const int cols = 4;
     const int rows = 2;
+    const int titleH = (title && title[0]) ? 9 : 0;
     const int cellW = w / cols;
-    const int cellH = h / rows;
+    const int cellH = (h - titleH) / rows;
+
+    if (titleH > 0) {
+      _tft->setTextFont(1);
+      _tft->setTextColor(TFT_CYAN, _bg);
+      _tft->setCursor(x + 2, y + 1);
+      _tft->print(title);
+    }
 
     for (int r = 0; r < rows; ++r) {
       for (int c = 0; c < cols; ++c) {
         const uint8_t idx = (uint8_t)(r * cols + c);
         const int x0 = x + c * cellW;
-        const int y0 = y + r * cellH;
+        const int y0 = y + titleH + r * cellH;
         _tft->drawRect(x0, y0, cellW, cellH, TFT_DARKGREY);
 
         const int cx = x0 + cellW / 2;
@@ -436,7 +472,7 @@ private:
 
         if (idx < in.sensor_count && in.present[idx]) {
           const uint16_t col = colorForSensor(in, idx, flashActive);
-          Quaternion qDraw = in.sensor_q[idx];
+          Quaternion qDraw = qSet[idx];
           if (in.cube_relative_rotation && idx >= 1 && idx <= 5 && in.hand_wrist_present) {
             qDraw = Quaternion::mul(in.hand_wrist_reference_q.inverseUnit(), qDraw);
             qDraw.normalizeInPlace();

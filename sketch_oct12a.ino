@@ -34,6 +34,7 @@
 #include <MPU6050.h>
 #include <math.h>
 
+#include "config.h"
 #include "GagRecogMerged.h"
 #include "GagOffsetsMerged.h"
 #include "GagTtgoVizMerged.h"
@@ -60,7 +61,6 @@ struct Vec3;
 #include <BleMouse.h>
 #define GAG_HAVE_BLE_MOUSE 1
 
-#include "config.h"
 
 #if (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY25) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_MPU9250) && (GAG_PRIMARY_WRIST_SENSOR != GAG_PRIMARY_WRIST_SENSOR_GY511)
 #error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_GY25, GAG_PRIMARY_WRIST_SENSOR_MPU9250, or GAG_PRIMARY_WRIST_SENSOR_GY511"
@@ -2437,6 +2437,16 @@ static gag::Quaternion currentRelativeWristQuaternionForFingerSensor(uint8_t sen
   return relQ;
 }
 
+static gag::Quaternion vizRawQuaternionForPhysicalSensor(uint8_t sensorIdx) {
+  if (sensorIdx >= SENSOR_COUNT_ALL) return gag::Quaternion();
+  return physicalFixedQuaternionForPhysicalSensor(sensorIdx);
+}
+
+static gag::Quaternion vizRawRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
+  if (sensorIdx >= SENSOR_COUNT_FINGERS) return gag::Quaternion();
+  return currentRelativeWristQuaternionForFingerSensor(sensorIdx);
+}
+
 static gag::Quaternion neutralRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
   gag::Quaternion relQ = currentRelativeWristQuaternionForFingerSensor(sensorIdx);
 #if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
@@ -3498,6 +3508,9 @@ static gag::viz::FrameInput buildVizFrame() {
     frame.sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_CUBES_RELATIVE_ROTATION)
                                ? correctedRelativeWristQuaternionForFingerSensor(s)
                                : correctedQuaternionForPhysicalSensor(s);
+    frame.raw_sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_CUBES_RELATIVE_ROTATION)
+                                   ? vizRawRelativeWristQuaternionForFingerSensor(s)
+                                   : vizRawQuaternionForPhysicalSensor(s);
     frame.hand_sensor_q[vizIdx] = (s < SENSOR_COUNT_FINGERS && GAG_VIZ_HAND_RELATIVE_ROTATION)
                                     ? correctedRelativeWristQuaternionForFingerSensor(s)
                                     : correctedQuaternionForPhysicalSensor(s);
