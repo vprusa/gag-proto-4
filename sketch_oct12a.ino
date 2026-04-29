@@ -157,10 +157,28 @@ struct Vec3 {
   float x, y, z;
 };
 
-// Choose which physical sensors emit corrected quaternions on Serial.
-// Example:
-//   sensorBitMask(SENSOR_THUMB) | sensorBitMask(SENSOR_INDEX) | sensorBitMask(SENSOR_WRIST_MPU9250)
-static uint8_t g_serialQuatLogSensorMask = 0;
+static uint8_t logicalWristQuaternionPhysicalSensor();
+
+static bool shouldLogSerialQuaternionForSensor(uint8_t sensorIdx) {
+#if !GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
+  (void)sensorIdx;
+  return false;
+#else
+#if GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG_INDEX
+  if (sensorIdx == SENSOR_INDEX) return true;
+#endif
+#if GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG_LOGICAL_WRIST
+  if (sensorIdx == logicalWristQuaternionPhysicalSensor()) return true;
+#endif
+  return false;
+#endif
+}
+
+static void printQuaternionCodeLiteral(const gag::Quaternion& qIn) {
+  gag::Quaternion q = qIn;
+  q.normalizeInPlace();
+  Serial.printf("Quaternion(%.8ff, %.8ff, %.8ff, %.8ff)", q.w, q.x, q.y, q.z);
+}
 static uint32_t g_lastSerialQuatLogMs = 0;
 static uint32_t g_lastMinorRotationOffsetPrintMs = 0;
 static uint32_t g_rightButtonLastTriggerMs = 0;
@@ -1532,6 +1550,7 @@ static void updateWristGy25RuntimeBias(const Vec3& accelBody,
   g_wristGy25RuntimeBiasDegY += (gyDegPerSecRaw - g_wristGy25RuntimeBiasDegY) * adapt;
   g_wristGy25RuntimeBiasDegZ += (gzDegPerSecRaw - g_wristGy25RuntimeBiasDegZ) * adapt;
 
+#if GAG_ENABLE_GY25_RUNTIME_BIAS_LOG
   if ((uint32_t)(nowMs - g_lastWristGy25BiasLogMs) >= 5000UL) {
     g_lastWristGy25BiasLogMs = nowMs;
     Serial.printf("GY25 runtime gyro bias deg/s = { %.3f, %.3f, %.3f }\n",
@@ -1539,6 +1558,7 @@ static void updateWristGy25RuntimeBias(const Vec3& accelBody,
                   g_wristGy25RuntimeBiasDegY,
                   g_wristGy25RuntimeBiasDegZ);
   }
+#endif
 }
 
 static gag::Quaternion integrateGyroQuaternion(const gag::Quaternion& currentIn,
@@ -1834,28 +1854,23 @@ static uint16_t selectedLogicalWristColor() {
 
 static void maybeLogSerialSensorQuaternions() {
 #if GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
-  if (g_serialQuatLogSensorMask == 0u) return;
-
   const uint32_t now = millis();
   if ((uint32_t)(now - g_lastSerialQuatLogMs) < (uint32_t)GAG_SERIAL_SENSOR_QUAT_LOG_INTERVAL_MS) return;
   g_lastSerialQuatLogMs = now;
 
+  bool printedAny = false;
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    if (!(g_serialQuatLogSensorMask & sensorBitMask(s))) continue;
+    if (!shouldLogSerialQuaternionForSensor(s)) continue;
+    if (!physicalSensorQuaternionAvailable(s)) continue;
 
-    if (!physicalSensorQuaternionAvailable(s)) {
-      Serial.printf("quat sensor=%u label=%s available=0\n",
-                    (unsigned)s,
-                    SENSOR_OFFSET_LABELS[s]);
-      continue;
-    }
-
-    const gag::Quaternion q = correctedQuaternionForPhysicalSensor(s);
-    Serial.printf("quat sensor=%u label=%s available=1 w=%.5f x=%.5f y=%.5f z=%.5f\n",
-                  (unsigned)s,
-                  SENSOR_OFFSET_LABELS[s],
-                  q.w, q.x, q.y, q.z);
+    if (printedAny) Serial.print("; ");
+    Serial.print(SENSOR_OFFSET_LABELS[s]);
+    Serial.print(": ");
+    printQuaternionCodeLiteral(correctedQuaternionForPhysicalSensor(s));
+    printedAny = true;
   }
+
+  if (printedAny) Serial.println();
 #endif
 }
 
@@ -3246,8 +3261,8 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
                   // gag::Sensor::INDEX absolute
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
@@ -3256,7 +3271,7 @@ static void installDefaultGestures() {
                   // gag::Quaternion(0.93727487f, 0.34785417f, 0.01777399f, -0.01404932f)
                   // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
                   // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
-                  25.0f, 250, 300, a, true);
+                  15.0f, 250, 300, a, true);
   }
 
   // Ring down -> right click, aligned with the left-click angle definition.
@@ -3270,13 +3285,13 @@ static void installDefaultGestures() {
     addPoseGesture2("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                   gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
                   // gag::Quaternion(0.91867083f, 0.36967331f, -0.04149037f, -0.13290632f)
 // gag::Sensor::RING relative_to_wrist
                   // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
                   // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
-                  25.0f, 250, 300, a, true);
+                  15.0f, 250, 300, a, true);
   }
 
   // Middle up/down -> continuous wheel scroll.
