@@ -238,6 +238,115 @@ struct Quaternion {
   }
 };
 
+enum class RotationAxis : uint8_t {
+  X = 0,
+  Y = 1,
+  Z = 2
+};
+
+struct RotationVectorDeg {
+  float x;
+  float y;
+  float z;
+
+  RotationVectorDeg() : x(0), y(0), z(0) {}
+  RotationVectorDeg(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
+};
+
+static inline float clampf(float v, float lo, float hi) {
+  return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+static inline float signf_or(float v, float fallback) {
+  if (v > 0.0f) return 1.0f;
+  if (v < 0.0f) return -1.0f;
+  return (fallback < 0.0f) ? -1.0f : 1.0f;
+}
+
+static inline float rotationVectorComponent(const RotationVectorDeg& v, RotationAxis axis) {
+  switch (axis) {
+    case RotationAxis::X: return v.x;
+    case RotationAxis::Y: return v.y;
+    case RotationAxis::Z: return v.z;
+    default: return 0.0f;
+  }
+}
+
+static inline void setRotationVectorComponent(RotationVectorDeg& v, RotationAxis axis, float value) {
+  switch (axis) {
+    case RotationAxis::X: v.x = value; break;
+    case RotationAxis::Y: v.y = value; break;
+    case RotationAxis::Z: v.z = value; break;
+    default: break;
+  }
+}
+
+static inline RotationVectorDeg rotationVectorDegFromQuaternion(const Quaternion& qIn) {
+  Quaternion q = qIn.normalized();
+  if (q.w < 0.0f) {
+    q.w = -q.w;
+    q.x = -q.x;
+    q.y = -q.y;
+    q.z = -q.z;
+  }
+
+  float w = clampf(q.w, -1.0f, 1.0f);
+  const float halfAngle = acosf(w);
+  const float sinHalf = sqrtf(fmaxf(0.0f, 1.0f - w * w));
+  if (halfAngle <= 1e-6f || sinHalf <= 1e-6f) return RotationVectorDeg();
+
+  const float angleDeg = halfAngle * 114.59155902616465f;
+  const float axisScale = angleDeg / sinHalf;
+  return RotationVectorDeg(q.x * axisScale, q.y * axisScale, q.z * axisScale);
+}
+
+static inline Quaternion quaternionFromRotationVectorDeg(const RotationVectorDeg& rvDeg) {
+  const float angleDeg = sqrtf(rvDeg.x * rvDeg.x + rvDeg.y * rvDeg.y + rvDeg.z * rvDeg.z);
+  if (angleDeg <= 1e-6f) return Quaternion();
+  return Quaternion::fromAxisAngleDeg(rvDeg.x / angleDeg,
+                                      rvDeg.y / angleDeg,
+                                      rvDeg.z / angleDeg,
+                                      angleDeg);
+}
+
+static inline RotationVectorDeg projectRotationVectorToPrimaryAxis(const RotationVectorDeg& in,
+                                                                   RotationAxis primaryAxis,
+                                                                   float secondaryLimitDeg,
+                                                                   float snapDominanceRatio,
+                                                                   float snapPrimaryBelowDeg,
+                                                                   float primarySignHint = 1.0f) {
+  RotationVectorDeg out = in;
+  const float primaryRaw = rotationVectorComponent(in, primaryAxis);
+
+  RotationAxis axisA = RotationAxis::X;
+  RotationAxis axisB = RotationAxis::Y;
+  switch (primaryAxis) {
+    case RotationAxis::X: axisA = RotationAxis::Y; axisB = RotationAxis::Z; break;
+    case RotationAxis::Y: axisA = RotationAxis::X; axisB = RotationAxis::Z; break;
+    case RotationAxis::Z: axisA = RotationAxis::X; axisB = RotationAxis::Y; break;
+    default: break;
+  }
+
+  const float offARaw = rotationVectorComponent(in, axisA);
+  const float offBRaw = rotationVectorComponent(in, axisB);
+  const float offMagRaw = sqrtf(offARaw * offARaw + offBRaw * offBRaw);
+  const bool impossibleAxis =
+    (offMagRaw > secondaryLimitDeg) &&
+    (fabsf(primaryRaw) < snapPrimaryBelowDeg || fabsf(primaryRaw) < offMagRaw * snapDominanceRatio);
+
+  if (impossibleAxis) {
+    const float totalMag = sqrtf(primaryRaw * primaryRaw + offARaw * offARaw + offBRaw * offBRaw);
+    out = RotationVectorDeg();
+    setRotationVectorComponent(out, primaryAxis, signf_or(primaryRaw, primarySignHint) * totalMag);
+    return out;
+  }
+
+  setRotationVectorComponent(out, axisA, clampf(offARaw, -secondaryLimitDeg, secondaryLimitDeg));
+  setRotationVectorComponent(out, axisB, clampf(offBRaw, -secondaryLimitDeg, secondaryLimitDeg));
+  return out;
+}
+
+
 struct AccelData {
   float x;
   float y;

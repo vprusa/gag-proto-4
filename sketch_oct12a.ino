@@ -217,6 +217,7 @@ static bool g_driftResetActive[SENSOR_COUNT_ALL] = { false };
 static gag::Quaternion g_relativeWristNeutralReference[SENSOR_COUNT_ALL];
 static bool g_relativeWristNeutralReferenceValid[SENSOR_COUNT_ALL] = { false };
 static gag::Quaternion g_fingerRelativeDriftOffset[SENSOR_COUNT_ALL];
+static int8_t g_fingerConstraintPrimarySign[SENSOR_COUNT_FINGERS] = { 1, 1, 1, 1, 1 };
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_middleScrollDriftResetDisableUntilMs = 0;
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
@@ -2447,6 +2448,47 @@ static gag::Quaternion vizRawRelativeWristQuaternionForFingerSensor(uint8_t sens
   return currentRelativeWristQuaternionForFingerSensor(sensorIdx);
 }
 
+static gag::RotationAxis primaryRotationAxisForFingerSensor(uint8_t sensorIdx) {
+  return (sensorIdx == SENSOR_THUMB) ? gag::RotationAxis::Z : gag::RotationAxis::X;
+}
+
+static float secondaryRotationLimitDegForFingerSensor(uint8_t sensorIdx) {
+  return (sensorIdx == SENSOR_THUMB)
+           ? (float)GAG_FINGER_RELATIVE_CONSTRAINT_THUMB_SECONDARY_LIMIT_DEG
+           : (float)GAG_FINGER_RELATIVE_CONSTRAINT_SECONDARY_LIMIT_DEG;
+}
+
+static gag::Quaternion constrainRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx,
+                                                                       const gag::Quaternion& relQIn) {
+  gag::Quaternion relQ = relQIn;
+  relQ.normalizeInPlace();
+#if GAG_ENABLE_FINGER_RELATIVE_ROTATION_CONSTRAINT
+  if (sensorIdx >= SENSOR_COUNT_FINGERS) return relQ;
+
+  const gag::RotationAxis primaryAxis = primaryRotationAxisForFingerSensor(sensorIdx);
+  const gag::RotationVectorDeg rv = gag::rotationVectorDegFromQuaternion(relQ);
+  const float primaryComponent = gag::rotationVectorComponent(rv, primaryAxis);
+  const float signHint = (float)g_fingerConstraintPrimarySign[sensorIdx];
+  const gag::RotationVectorDeg projected = gag::projectRotationVectorToPrimaryAxis(
+    rv,
+    primaryAxis,
+    secondaryRotationLimitDegForFingerSensor(sensorIdx),
+    (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_DOMINANCE_RATIO,
+    (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_PRIMARY_BELOW_DEG,
+    signHint);
+
+  const float projectedPrimary = gag::rotationVectorComponent(projected, primaryAxis);
+  if (fabsf(projectedPrimary) >= (float)GAG_FINGER_RELATIVE_CONSTRAINT_SIGN_UPDATE_DEG) {
+    g_fingerConstraintPrimarySign[sensorIdx] = (projectedPrimary < 0.0f) ? -1 : 1;
+  } else if (fabsf(primaryComponent) >= (float)GAG_FINGER_RELATIVE_CONSTRAINT_SIGN_UPDATE_DEG) {
+    g_fingerConstraintPrimarySign[sensorIdx] = (primaryComponent < 0.0f) ? -1 : 1;
+  }
+
+  relQ = gag::quaternionFromRotationVectorDeg(projected);
+#endif
+  return relQ;
+}
+
 static gag::Quaternion neutralRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx) {
   gag::Quaternion relQ = currentRelativeWristQuaternionForFingerSensor(sensorIdx);
 #if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_RELATIVE_WRIST
@@ -2466,7 +2508,7 @@ static gag::Quaternion correctedRelativeWristQuaternionForFingerSensor(uint8_t s
     relQ.normalizeInPlace();
   }
 #endif
-  return relQ;
+  return constrainRelativeWristQuaternionForFingerSensor(sensorIdx, relQ);
 }
 
 static void captureRelativeWristNeutralReference() {
@@ -2479,6 +2521,7 @@ static void captureRelativeWristNeutralReference() {
   if (!selectedWristQuaternionAvailable()) return;
 
   for (uint8_t s = 0; s < SENSOR_COUNT_FINGERS; ++s) {
+    g_fingerConstraintPrimarySign[s] = 1;
     if (!physicalSensorQuaternionAvailable(s)) continue;
     g_relativeWristNeutralReference[s] = currentRelativeWristQuaternionForFingerSensor(s);
     g_relativeWristNeutralReferenceValid[s] = true;
@@ -2486,6 +2529,9 @@ static void captureRelativeWristNeutralReference() {
 #else
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_fingerRelativeDriftOffset[s] = gag::Quaternion();
+  }
+  for (uint8_t s = 0; s < SENSOR_COUNT_FINGERS; ++s) {
+    g_fingerConstraintPrimarySign[s] = 1;
   }
 #endif
 }
@@ -2578,8 +2624,7 @@ static bool capturePoseQuaternionForRecognizerSensor(gag::Sensor sensor,
   absoluteQ = recognitionQuaternionForPhysicalSensor(sensorIdx);
   relativeQ = absoluteQ;
   if (selectedWristQuaternionAvailable()) {
-    relativeQ = gag::Quaternion::mul(recognitionLogicalWristQuaternion().inverseUnit(), absoluteQ);
-    relativeQ.normalizeInPlace();
+    relativeQ = correctedRelativeWristQuaternionForFingerSensor(sensorIdx);
     haveRelative = true;
   }
   return true;
@@ -2688,6 +2733,9 @@ static void resetSensorRuntimeOrientationState() {
   g_lastWristGy25BiasLogMs = 0;
   g_lastSoftSensorResetMs = now;
   g_lastSimultaneousDriftResetMs = now;
+  for (uint8_t i = 0; i < SENSOR_COUNT_FINGERS; ++i) {
+    g_fingerConstraintPrimarySign[i] = 1;
+  }
   resetContinuousThumbMouseControl();
 }
 
@@ -3455,6 +3503,11 @@ static void feedRecognizerFromCurrentPose() {
   for (uint8_t s = SENSOR_THUMB; s <= SENSOR_LITTLE; ++s) {
     if (!physicalSensorQuaternionAvailable(s)) continue;
     gag::Quaternion qCorr = recognitionQuaternionForPhysicalSensor(s);
+    if (selectedWristQuaternionAvailable()) {
+      qCorr = gag::Quaternion::mul(recognitionLogicalWristQuaternion(),
+                                   correctedRelativeWristQuaternionForFingerSensor(s));
+      qCorr.normalizeInPlace();
+    }
     g_recognizer.processSample(mapToRecognizerSensor(s), qCorr, now);
   }
 
