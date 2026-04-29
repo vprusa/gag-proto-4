@@ -475,6 +475,8 @@ public:
     return (idx < 0) ? 0 : _gestures[(uint8_t)idx].sensorMask();
   }
 
+  bool hasQuatProgressForSensor(Sensor sensor, uint8_t minMatchedQuats) const;
+
 private:
   struct PartialMatcher {
     bool active = false;
@@ -935,5 +937,25 @@ private:
     return false;
   }
 };
+
+inline bool Recognizer::hasQuatProgressForSensor(Sensor sensor, uint8_t minMatchedQuats) const {
+  if (minMatchedQuats == 0u) return false;
+  const uint8_t si = static_cast<uint8_t>(sensor);
+  for (uint8_t gi = 0; gi < _count; ++gi) {
+    const GestureDef& g = _gestures[gi];
+    if (!g.active) continue;
+    const SensorGestureData& track = g.perSensor[si];
+    if (track.len == 0u) continue;
+    const SensorRuntime& srt = _rt[gi].qrt[si];
+    uint8_t matchedQuats = srt.completed ? track.len : 0u;
+    for (uint8_t mi = 0; mi < GAG_RECOG_MAX_MATCHERS_PER_SENSOR; ++mi) {
+      const PartialMatcher& pm = srt.m[mi];
+      if (!pm.active) continue;
+      if (pm.index > matchedQuats) matchedQuats = pm.index;
+    }
+    if (matchedQuats >= minMatchedQuats) return true;
+  }
+  return false;
+}
 
 } // namespace gag

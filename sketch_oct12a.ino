@@ -2502,6 +2502,27 @@ static const char* recognizerSensorEnumToken(gag::Sensor sensor) {
   }
 }
 
+static bool shouldSuppressDriftResetForGestureProgress(uint8_t sensorIdx) {
+#if GAG_ENABLE_SIMULTANEOUS_DRIFT_RESET_GESTURE_PROGRESS_GUARD
+  const uint8_t minMatchedQuats = (uint8_t)GAG_SIMULTANEOUS_DRIFT_RESET_GESTURE_PROGRESS_MIN_QUATS;
+  if (minMatchedQuats == 0u) return false;
+  switch (sensorIdx) {
+    case SENSOR_THUMB:  return g_recognizer.hasQuatProgressForSensor(gag::Sensor::THUMB, minMatchedQuats);
+    case SENSOR_INDEX:  return g_recognizer.hasQuatProgressForSensor(gag::Sensor::INDEX, minMatchedQuats);
+    case SENSOR_MIDDLE: return g_recognizer.hasQuatProgressForSensor(gag::Sensor::MIDDLE, minMatchedQuats);
+    case SENSOR_RING:   return g_recognizer.hasQuatProgressForSensor(gag::Sensor::RING, minMatchedQuats);
+    case SENSOR_LITTLE: return g_recognizer.hasQuatProgressForSensor(gag::Sensor::LITTLE, minMatchedQuats);
+    case SENSOR_WRIST_GY25:
+    case SENSOR_WRIST_MPU9250:
+    case SENSOR_WRIST_GY511: return g_recognizer.hasQuatProgressForSensor(gag::Sensor::WRIST, minMatchedQuats);
+    default: return false;
+  }
+#else
+  (void)sensorIdx;
+  return false;
+#endif
+}
+
 static bool physicalSensorIndexForRecognizerSensor(gag::Sensor sensor, uint8_t& sensorIdx) {
   switch (sensor) {
     case gag::Sensor::THUMB: sensorIdx = SENSOR_THUMB; return true;
@@ -2855,6 +2876,11 @@ static void updateSimultaneousDriftReset() {
       continue;
     }
     if (!physicalSensorQuaternionAvailable(s)) {
+      g_driftResetLastPhysicalFixedValid[s] = false;
+      g_driftResetStillSinceMs[s] = now;
+      continue;
+    }
+    if (shouldSuppressDriftResetForGestureProgress(s)) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
       continue;
