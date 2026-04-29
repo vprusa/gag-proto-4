@@ -175,7 +175,7 @@ public:
 
     if (_mode == MODE_FULL || _mode == MODE_SKELETON_ONLY) {
       drawSkeleton(in, 0, skeletonTop, W, skeletonH, flashActive, blinkOn);
-      drawModeBadge(W - 54, 2);
+      drawModeBadge(2, 2);
     }
 
     if (_mode == MODE_FULL || _mode == MODE_CUBES_ONLY) {
@@ -183,7 +183,7 @@ public:
 #if GAG_ENABLE_RAW_CUBES_VISUALIZATION
       drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, nullptr, false);
 #endif
-      drawModeBadge(W - 54, 2);
+      drawModeBadge(2, 2);
     }
 
     if (_mode == MODE_FULL || _mode == MODE_LOG_ONLY || _mode == MODE_SKELETON_ONLY || _mode == MODE_CUBES_ONLY) {
@@ -314,11 +314,6 @@ private:
 
   void drawSkeleton(const FrameInput& in, int x, int y, int w, int h, bool flashActive, bool blinkOn) {
     _tft->drawFastHLine(x, y + h - 1, w, TFT_DARKGREY);
-    _tft->setTextFont(1);
-    _tft->setTextColor(TFT_LIGHTGREY, _bg);
-    _tft->setCursor(x + 4, y + 4);
-    _tft->print("HAND");
-
     const int indicatorW = (w > 48) ? 36 : 0;
     const int handX = x + indicatorW;
     const int handW = w - indicatorW;
