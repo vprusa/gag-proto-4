@@ -179,9 +179,9 @@ public:
     }
 
     if (_mode == MODE_FULL || _mode == MODE_CUBES_ONLY) {
-      drawCubeGrid(in, in.sensor_q, 0, cubesTop, W, cubesH, flashActive, blinkOn);
+      drawCubeGrid(in, in.sensor_q, 0, cubesTop, W, cubesH, flashActive, blinkOn, nullptr, true);
 #if GAG_ENABLE_RAW_CUBES_VISUALIZATION
-      drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, "RAW");
+      drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, nullptr, false);
 #endif
       drawModeBadge(W - 54, 2);
     }
@@ -210,7 +210,7 @@ private:
   static const char* modeName(uint8_t mode) {
     switch (mode) {
       case MODE_FULL: return "FULL";
-      case MODE_SKELETON_ONLY: return "HAND";
+      case MODE_SKELETON_ONLY: return "FULL";
       case MODE_CUBES_ONLY: return "CUBE";
       case MODE_LOG_ONLY: return "LOG";
       default: return "?";
@@ -438,7 +438,8 @@ private:
                     int h,
                     bool flashActive,
                     bool blinkOn,
-                    const char* title = nullptr) {
+                    const char* title = nullptr,
+                    bool showDriftIndicators = true) {
     const int cols = 4;
     const int rows = 2;
     const int titleH = (title && title[0]) ? 9 : 0;
@@ -468,10 +469,12 @@ private:
         const char* label = sensorLabel(idx);
         _tft->setCursor(x0 + 2, y0 + 2);
         _tft->print(label);
-        uint8_t labelLen = 0;
-        while (label[labelLen] != 0) ++labelLen;
-        const uint16_t driftDotColor = in.drift_reset_active[idx] ? TFT_RED : TFT_WHITE;
-        _tft->fillCircle(x0 + 6 + (int)labelLen * 6, y0 + 6, 2, driftDotColor);
+        if (showDriftIndicators) {
+          uint8_t labelLen = 0;
+          while (label[labelLen] != 0) ++labelLen;
+          const uint16_t driftDotColor = in.drift_reset_active[idx] ? TFT_RED : TFT_WHITE;
+          _tft->fillCircle(x0 + 6 + (int)labelLen * 6, y0 + 6, 2, driftDotColor);
+        }
 
         if (idx < in.sensor_count && in.present[idx]) {
           const uint16_t col = colorForSensor(in, idx, flashActive);

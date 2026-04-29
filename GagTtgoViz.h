@@ -154,9 +154,9 @@ public:
     }
 
     if (_mode == MODE_FULL || _mode == MODE_CUBES_ONLY) {
-      drawCubeGrid(in, in.sensor_q, 0, cubesTop, W, cubesH, flashActive, blinkOn);
+      drawCubeGrid(in, in.sensor_q, 0, cubesTop, W, cubesH, flashActive, blinkOn, nullptr, true);
 #if GAG_ENABLE_RAW_CUBES_VISUALIZATION
-      drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, "RAW");
+      drawCubeGrid(in, in.raw_sensor_q, 0, rawCubesTop, W, rawCubesH, flashActive, blinkOn, nullptr, false);
 #endif
       drawModeBadge(W - 54, 2);
     }
@@ -185,7 +185,7 @@ private:
   static const char* modeName(uint8_t mode) {
     switch (mode) {
       case MODE_FULL: return "FULL";
-      case MODE_SKELETON_ONLY: return "HAND";
+      case MODE_SKELETON_ONLY: return "FULL";
       case MODE_CUBES_ONLY: return "CUBE";
       case MODE_LOG_ONLY: return "LOG";
       default: return "?";
@@ -341,7 +341,8 @@ private:
                     int h,
                     bool flashActive,
                     bool blinkOn,
-                    const char* title = nullptr) {
+                    const char* title = nullptr,
+                    bool showDriftIndicators = true) {
     const int cols = 4;
     const int rows = 2;
     const int titleH = (title && title[0]) ? 9 : 0;
