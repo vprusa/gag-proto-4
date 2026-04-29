@@ -218,6 +218,9 @@ static gag::Quaternion g_relativeWristNeutralReference[SENSOR_COUNT_ALL];
 static bool g_relativeWristNeutralReferenceValid[SENSOR_COUNT_ALL] = { false };
 static gag::Quaternion g_fingerRelativeDriftOffset[SENSOR_COUNT_ALL];
 static int8_t g_fingerConstraintPrimarySign[SENSOR_COUNT_FINGERS] = { 1, 1, 1, 1, 1 };
+static gag::Quaternion g_fingerConstraintPrevRawRelative[SENSOR_COUNT_FINGERS];
+static gag::Quaternion g_fingerConstraintPrevCorrectedRelative[SENSOR_COUNT_FINGERS];
+static bool g_fingerConstraintPrevValid[SENSOR_COUNT_FINGERS] = { false, false, false, false, false };
 static bool g_enableDriftReset[SENSOR_COUNT_ALL] = { true, true, true, true, true, true, true, true };
 static uint32_t g_middleScrollDriftResetDisableUntilMs = 0;
 static uint32_t g_lastSimultaneousDriftResetMs = 0;
@@ -2458,6 +2461,40 @@ static float secondaryRotationLimitDegForFingerSensor(uint8_t sensorIdx) {
            : (float)GAG_FINGER_RELATIVE_CONSTRAINT_SECONDARY_LIMIT_DEG;
 }
 
+static float fingerConstraintCandidateScore(uint8_t sensorIdx,
+                                            const gag::Quaternion& rawRelQ,
+                                            const gag::Quaternion& candidateQ) {
+  if (sensorIdx >= SENSOR_COUNT_FINGERS || !g_fingerConstraintPrevValid[sensorIdx]) return 0.0f;
+
+  gag::Quaternion prevRaw = g_fingerConstraintPrevRawRelative[sensorIdx];
+  gag::Quaternion prevCorrected = g_fingerConstraintPrevCorrectedRelative[sensorIdx];
+  prevRaw.normalizeInPlace();
+  prevCorrected.normalizeInPlace();
+
+  gag::Quaternion rawNow = rawRelQ;
+  gag::Quaternion candidate = candidateQ;
+  rawNow.normalizeInPlace();
+  candidate.normalizeInPlace();
+
+  gag::Quaternion prevCorrection = gag::Quaternion::mul(prevCorrected, prevRaw.inverseUnit());
+  gag::Quaternion currentCorrection = gag::Quaternion::mul(candidate, rawNow.inverseUnit());
+  prevCorrection.normalizeInPlace();
+  currentCorrection.normalizeInPlace();
+
+  const float continuityDeg = rad2deg(gag::Quaternion::angularDistance(prevCorrected, candidate));
+  const float correctionDeltaDeg = rad2deg(gag::Quaternion::angularDistance(prevCorrection, currentCorrection));
+  return continuityDeg + 0.35f * correctionDeltaDeg;
+}
+
+static void resetFingerConstraintTracking() {
+  for (uint8_t i = 0; i < SENSOR_COUNT_FINGERS; ++i) {
+    g_fingerConstraintPrimarySign[i] = 1;
+    g_fingerConstraintPrevRawRelative[i] = gag::Quaternion();
+    g_fingerConstraintPrevCorrectedRelative[i] = gag::Quaternion();
+    g_fingerConstraintPrevValid[i] = false;
+  }
+}
+
 static gag::Quaternion constrainRelativeWristQuaternionForFingerSensor(uint8_t sensorIdx,
                                                                        const gag::Quaternion& relQIn) {
   gag::Quaternion relQ = relQIn;
@@ -2469,22 +2506,66 @@ static gag::Quaternion constrainRelativeWristQuaternionForFingerSensor(uint8_t s
   const gag::RotationVectorDeg rv = gag::rotationVectorDegFromQuaternion(relQ);
   const float primaryComponent = gag::rotationVectorComponent(rv, primaryAxis);
   const float signHint = (float)g_fingerConstraintPrimarySign[sensorIdx];
+  const float secondaryLimitDeg = secondaryRotationLimitDegForFingerSensor(sensorIdx);
+  const float snapDominanceRatio = (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_DOMINANCE_RATIO;
+  const float snapPrimaryBelowDeg = (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_PRIMARY_BELOW_DEG;
   const gag::RotationVectorDeg projected = gag::projectRotationVectorToPrimaryAxis(
     rv,
     primaryAxis,
-    secondaryRotationLimitDegForFingerSensor(sensorIdx),
-    (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_DOMINANCE_RATIO,
-    (float)GAG_FINGER_RELATIVE_CONSTRAINT_SNAP_PRIMARY_BELOW_DEG,
+    secondaryLimitDeg,
+    snapDominanceRatio,
+    snapPrimaryBelowDeg,
     signHint);
 
+  gag::RotationAxis axisA = gag::RotationAxis::X;
+  gag::RotationAxis axisB = gag::RotationAxis::Y;
+  switch (primaryAxis) {
+    case gag::RotationAxis::X: axisA = gag::RotationAxis::Y; axisB = gag::RotationAxis::Z; break;
+    case gag::RotationAxis::Y: axisA = gag::RotationAxis::X; axisB = gag::RotationAxis::Z; break;
+    case gag::RotationAxis::Z: axisA = gag::RotationAxis::X; axisB = gag::RotationAxis::Y; break;
+    default: break;
+  }
+
+  const float offA = gag::rotationVectorComponent(rv, axisA);
+  const float offB = gag::rotationVectorComponent(rv, axisB);
+  const float offMag = sqrtf(offA * offA + offB * offB);
+  const bool impossibleAxis =
+    (offMag > secondaryLimitDeg) &&
+    (fabsf(primaryComponent) < snapPrimaryBelowDeg || fabsf(primaryComponent) < offMag * snapDominanceRatio);
+
+  gag::RotationVectorDeg bestProjected = projected;
+  gag::Quaternion bestQuat = gag::quaternionFromRotationVectorDeg(projected);
+  float bestScore = fingerConstraintCandidateScore(sensorIdx, relQ, bestQuat);
+
   const float projectedPrimary = gag::rotationVectorComponent(projected, primaryAxis);
-  if (fabsf(projectedPrimary) >= (float)GAG_FINGER_RELATIVE_CONSTRAINT_SIGN_UPDATE_DEG) {
-    g_fingerConstraintPrimarySign[sensorIdx] = (projectedPrimary < 0.0f) ? -1 : 1;
+  const bool branchAmbiguous = impossibleAxis || fabsf(projectedPrimary) >= 90.0f;
+  if (branchAmbiguous) {
+    gag::RotationVectorDeg altProjected = projected;
+    gag::setRotationVectorComponent(altProjected, primaryAxis, -projectedPrimary);
+    gag::Quaternion altQuat = gag::quaternionFromRotationVectorDeg(altProjected);
+    const float altScore = fingerConstraintCandidateScore(sensorIdx, relQ, altQuat);
+    if (altScore + 0.001f < bestScore ||
+        (fabsf(altScore - bestScore) <= 0.001f && g_fingerConstraintPrevValid[sensorIdx] &&
+         rad2deg(gag::Quaternion::angularDistance(g_fingerConstraintPrevCorrectedRelative[sensorIdx], altQuat)) <
+         rad2deg(gag::Quaternion::angularDistance(g_fingerConstraintPrevCorrectedRelative[sensorIdx], bestQuat)))) {
+      bestProjected = altProjected;
+      bestQuat = altQuat;
+      bestScore = altScore;
+    }
+  }
+
+  const float bestPrimary = gag::rotationVectorComponent(bestProjected, primaryAxis);
+  if (fabsf(bestPrimary) >= (float)GAG_FINGER_RELATIVE_CONSTRAINT_SIGN_UPDATE_DEG) {
+    g_fingerConstraintPrimarySign[sensorIdx] = (bestPrimary < 0.0f) ? -1 : 1;
   } else if (fabsf(primaryComponent) >= (float)GAG_FINGER_RELATIVE_CONSTRAINT_SIGN_UPDATE_DEG) {
     g_fingerConstraintPrimarySign[sensorIdx] = (primaryComponent < 0.0f) ? -1 : 1;
   }
 
-  relQ = gag::quaternionFromRotationVectorDeg(projected);
+  g_fingerConstraintPrevRawRelative[sensorIdx] = relQ;
+  g_fingerConstraintPrevCorrectedRelative[sensorIdx] = bestQuat;
+  g_fingerConstraintPrevValid[sensorIdx] = true;
+  (void)bestScore;
+  relQ = bestQuat;
 #endif
   return relQ;
 }
@@ -2518,10 +2599,10 @@ static void captureRelativeWristNeutralReference() {
     g_relativeWristNeutralReferenceValid[s] = false;
     g_fingerRelativeDriftOffset[s] = gag::Quaternion();
   }
+  resetFingerConstraintTracking();
   if (!selectedWristQuaternionAvailable()) return;
 
   for (uint8_t s = 0; s < SENSOR_COUNT_FINGERS; ++s) {
-    g_fingerConstraintPrimarySign[s] = 1;
     if (!physicalSensorQuaternionAvailable(s)) continue;
     g_relativeWristNeutralReference[s] = currentRelativeWristQuaternionForFingerSensor(s);
     g_relativeWristNeutralReferenceValid[s] = true;
@@ -2530,9 +2611,7 @@ static void captureRelativeWristNeutralReference() {
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
     g_fingerRelativeDriftOffset[s] = gag::Quaternion();
   }
-  for (uint8_t s = 0; s < SENSOR_COUNT_FINGERS; ++s) {
-    g_fingerConstraintPrimarySign[s] = 1;
-  }
+  resetFingerConstraintTracking();
 #endif
 }
 
@@ -2733,9 +2812,7 @@ static void resetSensorRuntimeOrientationState() {
   g_lastWristGy25BiasLogMs = 0;
   g_lastSoftSensorResetMs = now;
   g_lastSimultaneousDriftResetMs = now;
-  for (uint8_t i = 0; i < SENSOR_COUNT_FINGERS; ++i) {
-    g_fingerConstraintPrimarySign[i] = 1;
-  }
+  resetFingerConstraintTracking();
   resetContinuousThumbMouseControl();
 }
 
