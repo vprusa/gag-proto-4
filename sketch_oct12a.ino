@@ -3246,17 +3246,17 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                   // gag::Sensor::INDEX absolute
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
                   // gag::Quaternion(0.99992245f, 0.01200788f, -0.00322799f, -0.00076021f),
                   // gag::Quaternion(0.99992245f, 0.01200788f, -0.00322799f, -0.00076021f),
                   // gag::Quaternion(0.93727487f, 0.34785417f, 0.01777399f, -0.01404932f)
-                  gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
-                  gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
-                  15.0f, 250, 300, a, true);
+                  // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
+                  // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
+                  25.0f, 250, 300, a, true);
   }
 
   // Ring down -> right click, aligned with the left-click angle definition.
@@ -3270,13 +3270,13 @@ static void installDefaultGestures() {
     addPoseGesture2("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                   gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                  //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
                   // gag::Quaternion(0.91867083f, 0.36967331f, -0.04149037f, -0.13290632f)
 // gag::Sensor::RING relative_to_wrist
-                  gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
-                  gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
-                  15.0f, 250, 300, a, true);
+                  // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
+                  // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
+                  25.0f, 250, 300, a, true);
   }
 
   // Middle up/down -> continuous wheel scroll.
