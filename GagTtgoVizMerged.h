@@ -154,19 +154,19 @@ public:
     if (!flashActive) _flashMask = 0;
 
     const int skeletonTop = 0;
-    const int skeletonH   = 72;
+    const int skeletonH   = 68;
     const int cubesTop    = skeletonTop + skeletonH;
 #if GAG_ENABLE_RAW_CUBES_VISUALIZATION
     const int logMinH     = 32;
     const int cubeGridCount = 2;
-    int cubesAreaH = (int)H - cubesTop - logMinH;
+    int cubesAreaH = (((int)H - cubesTop - logMinH) * 95) / 100;
     if (cubesAreaH < cubeGridCount * 24) cubesAreaH = cubeGridCount * 24;
     const int cubesH = cubesAreaH / cubeGridCount;
     const int rawCubesTop = cubesTop + cubesH;
     const int rawCubesH = cubesAreaH - cubesH;
     const int logTop = cubesTop + cubesAreaH;
 #else
-    const int cubesH      = 80;
+    const int cubesH      = 76;
     const int rawCubesTop = cubesTop + cubesH;
     const int rawCubesH   = 0;
     const int logTop      = cubesTop + cubesH;
