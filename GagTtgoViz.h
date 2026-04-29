@@ -131,18 +131,21 @@ public:
     const int skeletonTop = 0;
     const int skeletonH   = 72;
     const int cubesTop    = skeletonTop + skeletonH;
-    const int logMinH     = 32;
 #if GAG_ENABLE_RAW_CUBES_VISUALIZATION
+    const int logMinH     = 32;
     const int cubeGridCount = 2;
-#else
-    const int cubeGridCount = 1;
-#endif
     int cubesAreaH = (int)H - cubesTop - logMinH;
     if (cubesAreaH < cubeGridCount * 24) cubesAreaH = cubeGridCount * 24;
     const int cubesH = cubesAreaH / cubeGridCount;
     const int rawCubesTop = cubesTop + cubesH;
     const int rawCubesH = cubesAreaH - cubesH;
     const int logTop = cubesTop + cubesAreaH;
+#else
+    const int cubesH      = 80;
+    const int rawCubesTop = cubesTop + cubesH;
+    const int rawCubesH   = 0;
+    const int logTop      = cubesTop + cubesH;
+#endif
     const int logH        = H - logTop;
 
     if (_mode == MODE_FULL || _mode == MODE_SKELETON_ONLY) {
