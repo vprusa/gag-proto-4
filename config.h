@@ -157,7 +157,7 @@
 #ifndef GAG_ENABLE_IMU_ONLY_MOUSE
 // Mouse control derived directly from IMU motion rather than gesture actions.
 // Recommended: 0 unless you are specifically tuning IMU-driven pointer control.
-#define GAG_ENABLE_IMU_ONLY_MOUSE 1
+#define GAG_ENABLE_IMU_ONLY_MOUSE 0
 #endif
 
 #ifndef GAG_ENABLE_WRIST_MOUSE_EMULATION
@@ -169,7 +169,7 @@
 #ifndef GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE
 // Re-centers orientation after toggling wrist mouse mode.
 // Recommended: 0 by default; use 1 if toggling leaves the cursor biased.
-#define GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE 0
+#define GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE 1
 #endif
 
 #ifndef GAG_WRIST_MOUSE_TOGGLE_SOFT_RESET_DELAY_MS
