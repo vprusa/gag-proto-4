@@ -3504,7 +3504,7 @@ static void installDefaultGestures() {
     addPoseGesture2("little_left_double_click", "MOUSE_LEFT_DOUBLE_CLICK", "LDCLK",
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -3518,7 +3518,7 @@ static void installDefaultGestures() {
     addPoseGesture2("little_middle_click", "MOUSE_MIDDLE_CLICK", "MCLK",
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 0.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
                    15.0f, 250, 300, a, true);
   }
 
@@ -3530,7 +3530,8 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_CYAN;
     addPoseGesture("thumb_toggle_wrist_mouse", "TOGGLE_WRIST_MOUSE", "WMOU",
                    gag::Sensor::THUMB,
-                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -34.0f),
+                  //  gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -34.0f),
+                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, -45.0f),
                    18.0f, 450, 900, a, true);
   }
 
@@ -3688,6 +3689,7 @@ static gag::viz::FrameInput buildVizFrame() {
   frame.hand_wrist_color = selectedLogicalWristColor();
   frame.mouse_dx = g_thumbMouseVizDx;
   frame.mouse_dy = g_thumbMouseVizDy;
+  frame.mouse_emulation_enabled = g_wristMouseEmulationEnabled;
 #if GAG_ENABLE_BLE_MOUSE
   frame.mouse_send_enabled = g_bleMouseSendEnabled;
   frame.mouse_ble_connected = g_bleMouse.isConnected();

@@ -157,13 +157,13 @@
 #ifndef GAG_ENABLE_IMU_ONLY_MOUSE
 // Mouse control derived directly from IMU motion rather than gesture actions.
 // Recommended: 0 unless you are specifically tuning IMU-driven pointer control.
-#define GAG_ENABLE_IMU_ONLY_MOUSE 0
+#define GAG_ENABLE_IMU_ONLY_MOUSE 1
 #endif
 
 #ifndef GAG_ENABLE_WRIST_MOUSE_EMULATION
 // Enables continuous wrist-driven mouse movement logic.
 // Recommended: 0 by default; enable only on dedicated mouse-control profiles.
-#define GAG_ENABLE_WRIST_MOUSE_EMULATION 0
+#define GAG_ENABLE_WRIST_MOUSE_EMULATION 1
 #endif
 
 #ifndef GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE
@@ -289,13 +289,13 @@
 #endif
 
 #ifndef GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG
-// #define GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG 4.00f
-#define GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG 2.00f
+#define GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG 4.00f
+// #define GAG_SIMULTANEOUS_DRIFT_RESET_MOVEMENT_THRESHOLD_DEG 6.00f
 #endif
 
 #ifndef GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC
-// #define GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC 3.0f
-#define GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC 10.0f
+#define GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC 3.0f
+// #define GAG_SIMULTANEOUS_DRIFT_RESET_RATE_PER_SEC 6.0f
 #endif
 
 #ifndef GAG_SIMULTANEOUS_DRIFT_RESET_DEADBAND_DEG

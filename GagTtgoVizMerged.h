@@ -75,6 +75,7 @@ struct FrameInput {
   float mouse_dy;
   bool mouse_send_enabled;
   bool mouse_ble_connected;
+  bool mouse_emulation_enabled;
   uint8_t sensor_count = 0;
 
   FrameInput()
@@ -88,6 +89,7 @@ struct FrameInput {
       mouse_dy(0.0f),
       mouse_send_enabled(false),
       mouse_ble_connected(false),
+      mouse_emulation_enabled(false),
       sensor_count(0) {
     for (uint8_t i = 0; i < 8; ++i) {
       sensor_q[i] = Quaternion();
@@ -281,6 +283,7 @@ private:
     const float upN = clamp01(-in.mouse_dy * scale);
     const uint16_t arrowCol = in.mouse_send_enabled ? TFT_CYAN : TFT_DARKGREY;
     const uint16_t centerCol = in.mouse_ble_connected ? TFT_GREEN : TFT_ORANGE;
+    const uint16_t emulationDotCol = in.mouse_emulation_enabled ? TFT_RED : TFT_WHITE;
     const int minLen = 4;
     const int rightLen = minLen + (int)((float)maxLen * rightN);
     const int leftLen = minLen + (int)((float)maxLen * leftN);
@@ -310,6 +313,7 @@ private:
     _tft->drawLine(cx, cy + downLen, cx + 2, cy + downLen - 3, arrowCol);
 
     _tft->fillCircle(cx, cy, 2, centerCol);
+    _tft->fillCircle(x + boxW - 6, y + 6, 3, emulationDotCol);
   }
 
   void drawSkeleton(const FrameInput& in, int x, int y, int w, int h, bool flashActive, bool blinkOn) {
