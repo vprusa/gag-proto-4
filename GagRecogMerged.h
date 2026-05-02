@@ -403,6 +403,7 @@ struct GestureAction {
   bool switch_visualization_mode = false;
   bool blink_visualization = false;
   bool toggle_wrist_mouse_emulation = false;
+  bool start_finger_drift_reset_sequence = false;
   uint16_t blink_color565 = 0xFFFF;
 
   bool vibrate = false;

@@ -239,6 +239,8 @@ static void syncDriftResetEnableState() {
   }
 }
 
+static void scheduleGestureSoftReset(uint8_t sensorMask, uint32_t dueMs);
+
 static void blockDriftResetForGestureAction(uint32_t nowMs, uint32_t blockMs) {
 #if GAG_ENABLE_GESTURE_DRIFT_RESET_COOLDOWN
   if (blockMs == 0u) blockMs = (uint32_t)GAG_DEFAULT_GESTURE_DRIFT_RESET_BLOCK_MS;
@@ -251,6 +253,29 @@ static void blockDriftResetForGestureAction(uint32_t nowMs, uint32_t blockMs) {
   (void)nowMs;
   (void)blockMs;
 #endif
+}
+
+static uint32_t fingerGestureDriftResetDelayMs(uint8_t sensorIdx) {
+  switch (sensorIdx) {
+    case SENSOR_THUMB:
+      return (uint32_t)GAG_GESTURE_FINGER_DRIFT_RESET_DELAY_THUMB_MS;
+    case SENSOR_INDEX:
+      return (uint32_t)GAG_GESTURE_FINGER_DRIFT_RESET_DELAY_INDEX_MS;
+    case SENSOR_MIDDLE:
+      return (uint32_t)GAG_GESTURE_FINGER_DRIFT_RESET_DELAY_MIDDLE_MS;
+    case SENSOR_RING:
+      return (uint32_t)GAG_GESTURE_FINGER_DRIFT_RESET_DELAY_RING_MS;
+    case SENSOR_LITTLE:
+      return (uint32_t)GAG_GESTURE_FINGER_DRIFT_RESET_DELAY_LITTLE_MS;
+    default:
+      return 0u;
+  }
+}
+
+static void scheduleFingerDriftResetSequence(uint32_t nowMs) {
+  for (uint8_t s = SENSOR_THUMB; s <= SENSOR_LITTLE; ++s) {
+    scheduleGestureSoftReset(sensorBitMask(s), nowMs + fingerGestureDriftResetDelayMs(s));
+  }
 }
 
 // =====================
@@ -3535,6 +3560,18 @@ static void installDefaultGestures() {
                    18.0f, 450, 900, a, true);
   }
 
+  // Thumb left gesture starts staged drift reset for all finger sensors.
+  {
+    gag::GestureAction a;
+    a.start_finger_drift_reset_sequence = true;
+    a.blink_visualization = true;
+    a.blink_color565 = TFT_YELLOW;
+    addPoseGesture("thumb_start_finger_drift_reset", "START_FINGER_DRIFT_RESET", "FDRF",
+                   gag::Sensor::THUMB,
+                   gag::Quaternion::fromAxisAngleDeg(0, 0, 1, 45.0f),
+                   18.0f, 450, 900, a, true);
+  }
+
   // Thumb mouse movement now uses continuous control driven from the
   // corrected wrist pose in updateContinuousThumbMouseControl().
 }
@@ -3592,6 +3629,12 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       scheduleVibration((uint8_t)(1u << SENSOR_THUMB), g_wristMouseEmulationEnabled ? 60 : 120);
 #if GAG_SOFT_RESET_ON_WRIST_MOUSE_TOGGLE && !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
       scheduleWristMouseToggleSoftReset(nowMs + (uint32_t)GAG_WRIST_MOUSE_TOGGLE_SOFT_RESET_DELAY_MS);
+#endif
+    }
+    if (gr.action->start_finger_drift_reset_sequence) {
+      scheduleFingerDriftResetSequence(nowMs);
+#if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
+      g_viz.pushLog("FINGER DRIFT RESET");
 #endif
     }
     if (gr.action->blink_visualization) {
