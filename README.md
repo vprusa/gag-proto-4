@@ -48,21 +48,19 @@ Add project media here when available:
 
 Suggested README embed section once the assets exist:
 
-```md
 ## Photos And Demos
 
 ![Physical glove overview](docs/media/glove-photo-overview.jpg)
 ![Glove wiring schematic](docs/media/glove-wire-schema.png)
 ![Standalone glove demo](docs/media/glove-gesture-demo.gif)
 ![Mouse emulation demo](docs/media/glove-mouse-demo.gif)
-```
 
 ## Project Background
 
 This project is based on the upstream work:
 
-- `https://github.com/vprusa/gag`
-- `https://github.com/vprusa/gag-web`
+- [sources for previous prototypes](https://github.com/vprusa/gag)
+- [local web app](https://github.com/vprusa/gag-web)
 
 This repository extends that foundation with upgraded hardware assumptions, broader software capabilities, and many implementation improvements developed with LLM-assisted iteration and substantial manual refinement.
 
@@ -74,4 +72,4 @@ In practical terms, this project should be understood as:
 
 ## Development Notes
 
-For lower-level implementation notes, packaging details, and merged-header structure, see [notes/README.md](notes/README.md).
+In progress...
