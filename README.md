@@ -31,24 +31,10 @@ The current codebase combines upgraded hardware support with substantial softwar
 - gesture-triggered mouse actions and wrist-mouse toggling
 - desktop-testable recognition logic
 
-## Media Placeholders
-
-Add project media here when available:
-
-- `docs/media/glove-photo-overview.jpg`
-  Physical glove overview photo
-- `docs/media/glove-photo-closeup.jpg`
-  Close-up photo of sensors, routing, and mounting
-- `docs/media/glove-wire-schema.png`
-  Wiring schematic / connection diagram of the glove
-- `docs/media/glove-gesture-demo.gif`
-  GIF recording of the glove operating on its own
-- `docs/media/glove-mouse-demo.gif`
-  GIF recording of the glove emulating mouse input
-
-Suggested README embed section once the assets exist:
 
 ## Photos And Demos
+
+TODO
 
 ![Physical glove overview](docs/media/glove-photo-overview.jpg)
 ![Glove wiring schematic](docs/media/glove-wire-schema.png)
