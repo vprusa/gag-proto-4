@@ -613,8 +613,7 @@ private:
     return (int32_t)(now - _rt[gi].cooldown_until_ms) < 0;
   }
 
-  inline void clearRuntime(uint8_t gi) {
-    _rt[gi].cooldown_until_ms = 0;
+  inline void clearRuntimeState(uint8_t gi) {
     for (uint8_t s = 0; s < static_cast<uint8_t>(Sensor::COUNT); ++s) {
       _rt[gi].qrt[s].completed = false;
       _rt[gi].qrt[s].completed_start_ms = 0;
@@ -626,6 +625,32 @@ private:
         _rt[gi].qrt[s].m[m] = PartialMatcher();
         _rt[gi].art[s].m[m] = PartialMatcher();
       }
+    }
+  }
+
+  inline void clearRuntime(uint8_t gi) {
+    _rt[gi].cooldown_until_ms = 0;
+    clearRuntimeState(gi);
+  }
+
+  inline bool isNamedExclusivePair(const GestureDef& a, const GestureDef& b,
+                                   const char* lhs, const char* rhs) const {
+    return (streq(a.command, lhs) && streq(b.command, rhs)) ||
+           (streq(a.command, rhs) && streq(b.command, lhs));
+  }
+
+  inline bool areMutuallyExclusive(const GestureDef& a, const GestureDef& b) const {
+    return isNamedExclusivePair(a, b, "TOGGLE_WRIST_MOUSE", "START_FINGER_DRIFT_RESET") ||
+           isNamedExclusivePair(a, b, "MOUSE_LEFT_DOUBLE_CLICK", "MOUSE_MIDDLE_CLICK");
+  }
+
+  inline void suppressMutuallyExclusiveGestures(uint8_t recognizedGi, uint32_t now) {
+    const GestureDef& recognized = _gestures[recognizedGi];
+    for (uint8_t gi = 0; gi < _count; ++gi) {
+      if (gi == recognizedGi || !_gestures[gi].active) continue;
+      if (!areMutuallyExclusive(recognized, _gestures[gi])) continue;
+      clearRuntimeState(gi);
+      _rt[gi].cooldown_until_ms = now + _gestures[gi].recognition_delay_ms;
     }
   }
 
@@ -812,11 +837,9 @@ private:
     printRecognized(rg);
     if (_cb) _cb(rg);
 
+    suppressMutuallyExclusiveGestures(gi, now);
     _rt[gi].cooldown_until_ms = now + g.recognition_delay_ms;
-    for (uint8_t s = 0; s < static_cast<uint8_t>(Sensor::COUNT); ++s) {
-      _rt[gi].qrt[s] = SensorRuntime();
-      _rt[gi].art[s] = SensorRuntime();
-    }
+    clearRuntimeState(gi);
   }
 
   void printRecognized(const RecognizedGesture& rg) {
