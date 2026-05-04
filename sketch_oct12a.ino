@@ -230,7 +230,7 @@ static void syncDriftResetEnableState() {
   const uint32_t now = millis();
   const bool gestureCooldownActive = (int32_t)(now - g_driftResetBlockedUntilMs) < 0;
   for (uint8_t s = 0; s < SENSOR_COUNT_ALL; ++s) {
-    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick && !gestureCooldownActive;
+    g_enableDriftReset[s] = !g_printQuaternionsOnLeftClick && !gestureCooldownActive && !g_wristMouseEmulationEnabled;
     if (!g_enableDriftReset[s]) {
       g_driftResetLastPhysicalFixedValid[s] = false;
       g_driftResetStillSinceMs[s] = now;
@@ -240,6 +240,13 @@ static void syncDriftResetEnableState() {
 }
 
 static void scheduleGestureSoftReset(uint8_t sensorMask, uint32_t dueMs);
+
+static void clearPendingGestureSoftResets() {
+  for (uint8_t i = 0; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
+    g_pendingGestureSoftResetMask[i] = 0u;
+    g_pendingGestureSoftResetDueMs[i] = 0;
+  }
+}
 
 static void blockDriftResetForGestureAction(uint32_t nowMs, uint32_t blockMs) {
 #if GAG_ENABLE_GESTURE_DRIFT_RESET_COOLDOWN
@@ -3150,6 +3157,10 @@ static void scheduleGestureSoftReset(uint8_t sensorMask, uint32_t dueMs) {
 }
 
 static void processPendingGestureSoftResets() {
+  if (g_wristMouseEmulationEnabled) {
+    clearPendingGestureSoftResets();
+    return;
+  }
   const uint32_t now = millis();
   for (uint8_t i = 0; i < GAG_MAX_PENDING_GESTURE_SOFT_RESETS; ++i) {
     const uint8_t mask = g_pendingGestureSoftResetMask[i];
@@ -3225,6 +3236,7 @@ static void maybeHandleTtgoLeftButtonHardReset() {
 
 static void maybeHandlePeriodicSoftSensorReset() {
 #if GAG_PERIODIC_SOFT_SENSOR_RESET
+  if (g_wristMouseEmulationEnabled) return;
   const uint32_t intervalMs = (uint32_t)GAG_PERIODIC_SOFT_SENSOR_RESET_INTERVAL_MS;
   if (intervalMs == 0u) return;
   const uint32_t now = millis();
@@ -3445,7 +3457,7 @@ static void installDefaultGestures() {
                   // gag::Quaternion(0.93727487f, 0.34785417f, 0.01777399f, -0.01404932f)
                   // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
                   // gag::Quaternion(0.93932605f, 0.34259737f, 0.01534605f, -0.00762683f),
-                  15.0f, 250, 300, a, true);
+                  20.0f, 250, 300, a, true);
   }
 
   // Ring down -> right click, aligned with the left-click angle definition.
@@ -3455,7 +3467,7 @@ static void installDefaultGestures() {
     a.blink_color565 = TFT_MAGENTA;
     a.mouse.type = MouseActionType::CLICK;
     a.mouse.button = MOUSE_RIGHT;
-                       gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
+      // gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
     addPoseGesture2("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                   gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
@@ -3465,7 +3477,7 @@ static void installDefaultGestures() {
 // gag::Sensor::RING relative_to_wrist
                   // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
                   // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
-                  15.0f, 250, 300, a, true);
+                  20.0f, 250, 300, a, true);
   }
 
   // Middle up/down -> continuous wheel scroll.
@@ -3595,7 +3607,7 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
       blockDriftResetForGestureAction(nowMs, gr.driftResetBlockMs);
     }
 #if !GAG_ENABLE_LEFT_BUTTON_QUAT_CAPTURE
-    const uint8_t softResetMask = physicalSensorMaskForGestureSoftReset(gr);
+    const uint8_t softResetMask = g_wristMouseEmulationEnabled ? 0u : physicalSensorMaskForGestureSoftReset(gr);
     if (softResetMask != 0u) {
 #if GAG_ENABLE_DELAYED_GESTURE_SOFT_RESET
       scheduleGestureSoftReset(softResetMask, nowMs + gr.softResetDelayMs);
@@ -3619,6 +3631,9 @@ static void onGestureRecognized(const gag::RecognizedGesture& gr) {
     }
     if (gr.action->toggle_wrist_mouse_emulation) {
       g_wristMouseEmulationEnabled = !g_wristMouseEmulationEnabled;
+      if (g_wristMouseEmulationEnabled) {
+        clearPendingGestureSoftResets();
+      }
       syncDriftResetEnableState();
       clearPendingLeftClick();
       resetContinuousThumbMouseControl();
