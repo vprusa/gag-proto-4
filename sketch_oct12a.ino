@@ -1209,7 +1209,8 @@ static void computeCircularThumbMouseTarget(float rawDxDeg,
                                           float& targetDx,
                                           float& targetDy,
                                           float& maxStepPerLoop) {
-  const float deadzoneRadiusDeg = 6.0f;
+  // const float deadzoneRadiusDeg = 6.0f;
+  const float deadzoneRadiusDeg = 3.0f;
   const float fastRingRadiusDeg = 18.0f;
   const float fullScaleRadiusDeg = 24.0f;
   const float normalMaxStepPerLoop = 16.0f;
@@ -3447,8 +3448,8 @@ static void installDefaultGestures() {
     addPoseGesture2("index_left_click", "MOUSE_LEFT_CLICK", "LCLK",
                    gag::Sensor::INDEX,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
                   // gag::Sensor::INDEX absolute
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
                   // gag::Quaternion(0.99992257f, 0.01183951f, -0.00383035f, -0.00002276f),
@@ -3471,8 +3472,8 @@ static void installDefaultGestures() {
     addPoseGesture2("ring_right_click", "MOUSE_RIGHT_CLICK", "RCLK",
                   gag::Sensor::RING,
                   //  gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 25.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
-                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 35.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
+                   gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 40.0f),
                   // gag::Quaternion(0.91867083f, 0.36967331f, -0.04149037f, -0.13290632f)
 // gag::Sensor::RING relative_to_wrist
                   // gag::Quaternion(0.92188686f, 0.36352029f, -0.03977941f, -0.12804425f),
@@ -3542,7 +3543,7 @@ static void installDefaultGestures() {
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, 30.0f),
-                   15.0f, 250, 300, a, true);
+                   20.0f, 250, 300, a, true);
   }
 
   // Little up -> wheel button click.
@@ -3556,7 +3557,7 @@ static void installDefaultGestures() {
                    gag::Sensor::LITTLE,
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
                    gag::Quaternion::fromAxisAngleDeg(1, 0, 0, -30.0f),
-                   15.0f, 250, 300, a, true);
+                   20.0f, 250, 300, a, true);
   }
 
   // Thumb right gesture toggles wrist mouse emulation.
