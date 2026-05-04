@@ -186,7 +186,7 @@ static bool g_leftButtonPrevPressed = false;
 static uint32_t g_leftButtonLastTriggerMs = 0;
 static bool g_bleMouseSendEnabled = false;
 static bool g_isMouseMoving = false;
-static bool g_wristMouseEmulationEnabled = true;
+static bool g_wristMouseEmulationEnabled = false;
 static bool g_pendingLeftClick = false;
 static uint32_t g_pendingLeftClickDueMs = 0;
 static uint32_t g_ignoreSingleLeftClickUntilMs = 0;
@@ -3781,7 +3781,7 @@ static void resetFusionState() {
   g_lastSerialQuatLogMs = 0;
   g_lastMinorRotationOffsetPrintMs = 0;
   g_bleMouseSendEnabled = false;
-  g_wristMouseEmulationEnabled = true;
+  g_wristMouseEmulationEnabled = false;
   syncDriftResetEnableState();
   clearPendingLeftClick();
   g_ignoreSingleLeftClickUntilMs = 0;
