@@ -34,12 +34,7 @@ The current codebase combines upgraded hardware support with substantial softwar
 
 ## Photos And Demos
 
-TODO
-
-![Physical glove overview](docs/media/glove-photo-overview.jpg)
-![Glove wiring schematic](docs/media/glove-wire-schema.png)
-![Standalone glove demo](docs/media/glove-gesture-demo.gif)
-![Mouse emulation demo](docs/media/glove-mouse-demo.gif)
+![Glove mouse emulation demo](docu/media/glove_proto_no_4_vid_1_with_text_2026-05-04_13-26-18.gif)
 
 ## Project Background
 
