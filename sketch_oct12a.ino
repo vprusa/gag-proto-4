@@ -66,6 +66,22 @@ struct Vec3;
 #error "GAG_PRIMARY_WRIST_SENSOR must be GAG_PRIMARY_WRIST_SENSOR_GY25, GAG_PRIMARY_WRIST_SENSOR_MPU9250, or GAG_PRIMARY_WRIST_SENSOR_GY511"
 #endif
 
+#if (GAG_FINGER_SENSOR_TYPE_THUMB != GAG_FINGER_SENSOR_TYPE_MPU6050) && (GAG_FINGER_SENSOR_TYPE_THUMB != GAG_FINGER_SENSOR_TYPE_MPU9250) && (GAG_FINGER_SENSOR_TYPE_THUMB != GAG_FINGER_SENSOR_TYPE_WT901)
+#error "GAG_FINGER_SENSOR_TYPE_THUMB must be GAG_FINGER_SENSOR_TYPE_MPU6050, GAG_FINGER_SENSOR_TYPE_MPU9250, or GAG_FINGER_SENSOR_TYPE_WT901"
+#endif
+#if (GAG_FINGER_SENSOR_TYPE_INDEX != GAG_FINGER_SENSOR_TYPE_MPU6050) && (GAG_FINGER_SENSOR_TYPE_INDEX != GAG_FINGER_SENSOR_TYPE_MPU9250) && (GAG_FINGER_SENSOR_TYPE_INDEX != GAG_FINGER_SENSOR_TYPE_WT901)
+#error "GAG_FINGER_SENSOR_TYPE_INDEX must be GAG_FINGER_SENSOR_TYPE_MPU6050, GAG_FINGER_SENSOR_TYPE_MPU9250, or GAG_FINGER_SENSOR_TYPE_WT901"
+#endif
+#if (GAG_FINGER_SENSOR_TYPE_MIDDLE != GAG_FINGER_SENSOR_TYPE_MPU6050) && (GAG_FINGER_SENSOR_TYPE_MIDDLE != GAG_FINGER_SENSOR_TYPE_MPU9250) && (GAG_FINGER_SENSOR_TYPE_MIDDLE != GAG_FINGER_SENSOR_TYPE_WT901)
+#error "GAG_FINGER_SENSOR_TYPE_MIDDLE must be GAG_FINGER_SENSOR_TYPE_MPU6050, GAG_FINGER_SENSOR_TYPE_MPU9250, or GAG_FINGER_SENSOR_TYPE_WT901"
+#endif
+#if (GAG_FINGER_SENSOR_TYPE_RING != GAG_FINGER_SENSOR_TYPE_MPU6050) && (GAG_FINGER_SENSOR_TYPE_RING != GAG_FINGER_SENSOR_TYPE_MPU9250) && (GAG_FINGER_SENSOR_TYPE_RING != GAG_FINGER_SENSOR_TYPE_WT901)
+#error "GAG_FINGER_SENSOR_TYPE_RING must be GAG_FINGER_SENSOR_TYPE_MPU6050, GAG_FINGER_SENSOR_TYPE_MPU9250, or GAG_FINGER_SENSOR_TYPE_WT901"
+#endif
+#if (GAG_FINGER_SENSOR_TYPE_LITTLE != GAG_FINGER_SENSOR_TYPE_MPU6050) && (GAG_FINGER_SENSOR_TYPE_LITTLE != GAG_FINGER_SENSOR_TYPE_MPU9250) && (GAG_FINGER_SENSOR_TYPE_LITTLE != GAG_FINGER_SENSOR_TYPE_WT901)
+#error "GAG_FINGER_SENSOR_TYPE_LITTLE must be GAG_FINGER_SENSOR_TYPE_MPU6050, GAG_FINGER_SENSOR_TYPE_MPU9250, or GAG_FINGER_SENSOR_TYPE_WT901"
+#endif
+
 // =====================
 // Pins & PCA9548A / TCA9548A
 // =====================
@@ -78,6 +94,7 @@ struct Vec3;
 #define DRIVE_PCA_ADDR_PINS false
 #define PCA9548A_BASE_ADDR 0x70
 #define MPU9250_ADDR_DEFAULT 0x68
+#define WT901_ADDR_DEFAULT 0x50
 
 static uint8_t pca_addr = PCA9548A_BASE_ADDR;
 static uint8_t g_wristMpuAddr = MPU9250_ADDR_DEFAULT;
@@ -158,6 +175,10 @@ struct Vec3 {
 };
 
 static uint8_t logicalWristQuaternionPhysicalSensor();
+static bool sensorUsesWt901Backend(uint8_t sensorIdx);
+static bool sensorUsesMpu9250Backend(uint8_t sensorIdx);
+static bool sensorUsesCompassDriftCorrection(uint8_t sensorIdx);
+static gag::Quaternion applyHeadingCorrection(const gag::Quaternion& currentIn, const Vec3& magBody, float gain);
 
 static bool shouldLogSerialQuaternionForSensor(uint8_t sensorIdx) {
 #if !GAG_ENABLE_SERIAL_SENSOR_QUAT_LOG
@@ -417,6 +438,8 @@ bool gy511MagOk = true;
 Vec3 gy511Accel_g{ 0, 0, 0 };
 Vec3 gy511MagRaw{ 0, 0, 0 };
 unsigned long gy511LastT = 0;
+bool g_sensorAuxMagOk[SENSOR_COUNT_ALL] = { false };
+Vec3 g_sensorAuxMagRaw[SENSOR_COUNT_ALL];
 
 // =====================
 // Default offsets
@@ -773,7 +796,7 @@ static void printWristMpuDiagnostic() {
 static uint8_t detectMpuAddressForSensor(uint8_t sensorIdx) {
   if (sensorIdx >= SENSOR_COUNT_ALL || !isMpuBackedSensor(sensorIdx)) return 0;
   pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
-  if (sensorIdx == SENSOR_WRIST_MPU9250) {
+  if (sensorUsesMpu9250Backend(sensorIdx)) {
     const uint8_t who68 = i2cReadByte(MPU9250_ADDR_DEFAULT, REG_WHO_AM_I);
     if (who68 == 0x71 || who68 == 0x73) return MPU9250_ADDR_DEFAULT;
     const uint8_t who69 = i2cReadByte(MPU9250_ADDR_ALT, REG_WHO_AM_I);
@@ -786,7 +809,7 @@ static uint8_t detectMpuAddressForSensor(uint8_t sensorIdx) {
 }
 
 static inline bool usesDirectMpuRegisterAccess(uint8_t sensorIdx) {
-  return sensorIdx == SENSOR_WRIST_MPU9250;
+  return sensorUsesMpu9250Backend(sensorIdx);
 }
 
 static void updateWristMpuAddress() {
@@ -1046,6 +1069,127 @@ static float yawFromMagTiltComp(const Vec3& m, float rollDeg, float pitchDeg) {
   float mx2 = m.x * cp + m.z * sp;
   float my2 = m.x * sr * sp + m.y * cr - m.z * sr * cp;
   return wrap180(rad2deg(atan2f(-my2, mx2)));
+}
+
+static uint8_t wt901AddressForSensor(uint8_t sensorIdx) {
+  (void)sensorIdx;
+  return WT901_ADDR_DEFAULT;
+}
+
+static bool readWt901Words(uint8_t sensorIdx, uint8_t reg, uint8_t wordCount, int16_t* out) {
+  if (!sensorUsesWt901Backend(sensorIdx) || out == nullptr || wordCount == 0u) return false;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  uint8_t buf[12] = { 0 };
+  const uint8_t byteCount = (uint8_t)(wordCount * 2u);
+  if (byteCount > sizeof(buf)) return false;
+  i2cReadBytes(wt901AddressForSensor(sensorIdx), reg, buf, byteCount);
+  for (uint8_t i = 0; i < wordCount; ++i) {
+    out[i] = (int16_t)(((int16_t)buf[i * 2u + 1u] << 8) | buf[i * 2u]);
+  }
+  return true;
+}
+
+static bool detectWt901ForSensor(uint8_t sensorIdx) {
+  if (!sensorUsesWt901Backend(sensorIdx)) return false;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  return i2cAddressResponds(wt901AddressForSensor(sensorIdx));
+}
+
+static bool readWt901Quaternion(uint8_t sensorIdx, gag::Quaternion& qOut) {
+  int16_t qRaw[4] = { 0, 0, 0, 0 };
+  if (!readWt901Words(sensorIdx, 0x51, 4u, qRaw)) return false;
+  gag::Quaternion q((float)qRaw[0] / 32768.0f,
+                    (float)qRaw[1] / 32768.0f,
+                    (float)qRaw[2] / 32768.0f,
+                    (float)qRaw[3] / 32768.0f);
+  q.normalizeInPlace();
+  qOut = q;
+  return true;
+}
+
+static bool readWt901AccelBody(uint8_t sensorIdx, Vec3& accelBody) {
+  int16_t accRaw[3] = { 0, 0, 0 };
+  if (!readWt901Words(sensorIdx, 0x34, 3u, accRaw)) return false;
+  accelBody.x = (float)accRaw[0] / 2048.0f;
+  accelBody.y = (float)accRaw[1] / 2048.0f;
+  accelBody.z = (float)accRaw[2] / 2048.0f;
+  return true;
+}
+
+static bool readWt901Mag(uint8_t sensorIdx, Vec3& magRaw) {
+  int16_t magWords[3] = { 0, 0, 0 };
+  if (!readWt901Words(sensorIdx, 0x3A, 3u, magWords)) return false;
+  magRaw.x = (float)magWords[0];
+  magRaw.y = (float)magWords[1];
+  magRaw.z = (float)magWords[2];
+  return true;
+}
+
+static bool initMpu9250MagForSensor(uint8_t sensorIdx) {
+  if (!sensorUsesMpu9250Backend(sensorIdx) || !(sensorUsesCompassDriftCorrection(sensorIdx) || sensorIdx == SENSOR_WRIST_MPU9250)) return false;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  i2cWriteByte(mpuAddressForSensor(sensorIdx), REG_INT_PIN_CFG, 0x02);
+  delay(10);
+  const uint8_t who = i2cReadByte(AK8963_ADDR, AK8963_WHO_AM_I);
+  if (who != 0x48) return false;
+  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x00);
+  delay(10);
+  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x16);
+  delay(10);
+  return true;
+}
+
+static bool readMpu9250MagForSensor(uint8_t sensorIdx, Vec3& magOut) {
+  if (!sensorUsesMpu9250Backend(sensorIdx) || !g_sensorAuxMagOk[sensorIdx]) return false;
+  pcaSelect(ACTIVE_CHANNELS[sensorIdx]);
+  const uint8_t st1 = i2cReadByte(AK8963_ADDR, AK8963_ST1);
+  if ((st1 & 0x01u) == 0u) return false;
+  uint8_t buf[7] = { 0 };
+  i2cReadBytes(AK8963_ADDR, AK8963_HXL, buf, 7);
+  const int16_t mx = (int16_t)((buf[1] << 8) | buf[0]);
+  const int16_t my = (int16_t)((buf[3] << 8) | buf[2]);
+  const int16_t mz = (int16_t)((buf[5] << 8) | buf[4]);
+  magOut.x = (float)mx;
+  magOut.y = (float)my;
+  magOut.z = (float)mz;
+  return true;
+}
+
+static void updateWt901(uint8_t sensorIdx) {
+  if (!sensorUsesWt901Backend(sensorIdx) || !g_sensorInitOk[sensorIdx]) return;
+
+  gag::Quaternion qMeasured;
+  if (!readWt901Quaternion(sensorIdx, qMeasured)) return;
+
+  Vec3 accelBody{ 0.0f, 0.0f, 0.0f };
+  if (readWt901AccelBody(sensorIdx, accelBody)) {
+    g_lastAccelBody[sensorIdx] = accelBody;
+    g_lastAccelBodyValid[sensorIdx] = true;
+  }
+
+  const uint32_t now = millis();
+  float dt = (now - lastT[sensorIdx]) / 1000.0f;
+  if (dt <= 0.0f) dt = 0.01f;
+  if (dt > 0.1f) dt = 0.1f;
+  lastT[sensorIdx] = now;
+
+  const gag::Quaternion prevQ = g_sensorFusionQuat[sensorIdx];
+  gag::Quaternion q = qMeasured;
+  if (sensorUsesCompassDriftCorrection(sensorIdx)) {
+    Vec3 magBody;
+    if (readWt901Mag(sensorIdx, magBody)) {
+      g_sensorAuxMagOk[sensorIdx] = true;
+      g_sensorAuxMagRaw[sensorIdx] = magBody;
+      q = applyHeadingCorrection(q, magBody, (float)GAG_FINGER_COMPASS_HEADING_CORRECTION_GAIN);
+    }
+  }
+
+  if (g_sensorFusionInitialized[sensorIdx]) {
+    q = applyQuaternionAngularDeadband(sensorIdx, prevQ, q, dt);
+  }
+
+  g_sensorFusionQuat[sensorIdx] = q;
+  g_sensorFusionInitialized[sensorIdx] = true;
 }
 
 // =====================
@@ -1485,7 +1629,47 @@ static inline bool isFingerSensor(uint8_t sensorIdx) {
   return sensorIdx <= SENSOR_LITTLE;
 }
 
+static uint8_t configuredFingerSensorType(uint8_t sensorIdx) {
+  switch (sensorIdx) {
+    case SENSOR_THUMB: return (uint8_t)GAG_FINGER_SENSOR_TYPE_THUMB;
+    case SENSOR_INDEX: return (uint8_t)GAG_FINGER_SENSOR_TYPE_INDEX;
+    case SENSOR_MIDDLE: return (uint8_t)GAG_FINGER_SENSOR_TYPE_MIDDLE;
+    case SENSOR_RING: return (uint8_t)GAG_FINGER_SENSOR_TYPE_RING;
+    case SENSOR_LITTLE: return (uint8_t)GAG_FINGER_SENSOR_TYPE_LITTLE;
+    default: return (uint8_t)GAG_FINGER_SENSOR_TYPE_MPU6050;
+  }
+}
+
+static bool sensorUsesWt901Backend(uint8_t sensorIdx) {
+  return isFingerSensor(sensorIdx) && configuredFingerSensorType(sensorIdx) == (uint8_t)GAG_FINGER_SENSOR_TYPE_WT901;
+}
+
+static bool sensorUsesMpu9250Backend(uint8_t sensorIdx) {
+  return sensorIdx == SENSOR_WRIST_MPU9250
+      || (isFingerSensor(sensorIdx) && configuredFingerSensorType(sensorIdx) == (uint8_t)GAG_FINGER_SENSOR_TYPE_MPU9250);
+}
+
+static bool sensorUsesMpu6050Backend(uint8_t sensorIdx) {
+  if (sensorIdx == SENSOR_WRIST_GY25) return true;
+  return isFingerSensor(sensorIdx) && configuredFingerSensorType(sensorIdx) == (uint8_t)GAG_FINGER_SENSOR_TYPE_MPU6050;
+}
+
+static bool sensorUsesCompassDriftCorrection(uint8_t sensorIdx) {
+  switch (sensorIdx) {
+    case SENSOR_THUMB: return GAG_ENABLE_FINGER_COMPASS_DRIFT_CORRECTION_THUMB;
+    case SENSOR_INDEX: return GAG_ENABLE_FINGER_COMPASS_DRIFT_CORRECTION_INDEX;
+    case SENSOR_MIDDLE: return GAG_ENABLE_FINGER_COMPASS_DRIFT_CORRECTION_MIDDLE;
+    case SENSOR_RING: return GAG_ENABLE_FINGER_COMPASS_DRIFT_CORRECTION_RING;
+    case SENSOR_LITTLE: return GAG_ENABLE_FINGER_COMPASS_DRIFT_CORRECTION_LITTLE;
+    default: return false;
+  }
+}
+
 static inline bool isMpuBackedSensor(uint8_t sensorIdx) {
+  return sensorUsesMpu6050Backend(sensorIdx) || sensorUsesMpu9250Backend(sensorIdx);
+}
+
+static inline bool isRuntimeUpdatedImuSensor(uint8_t sensorIdx) {
   return sensorIdx < SENSOR_COUNT_ALL && sensorIdx != SENSOR_WRIST_GY511;
 }
 
@@ -2034,32 +2218,12 @@ static void updateGY511() {
 // =====================
 static bool initWristMagAK8963() {
   if (!isSensorEnabled(SENSOR_WRIST_MPU9250)) return false;
-  pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST_MPU9250]);
-  i2cWriteByte(wristMpuAddress(), REG_INT_PIN_CFG, 0x02);  // bypass enable
-  delay(10);
-  uint8_t who = i2cReadByte(AK8963_ADDR, AK8963_WHO_AM_I);
-  if (who != 0x48) return false;
-  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x00);
-  delay(10);
-  i2cWriteByte(AK8963_ADDR, AK8963_CNTL1, 0x16);
-  delay(10);  // continuous 2, 16-bit
-  return true;
+  g_sensorAuxMagOk[SENSOR_WRIST_MPU9250] = initMpu9250MagForSensor(SENSOR_WRIST_MPU9250);
+  return g_sensorAuxMagOk[SENSOR_WRIST_MPU9250];
 }
 
 static bool readWristMag(Vec3& magOut) {
-  if (!isSensorEnabled(SENSOR_WRIST_MPU9250)) return false;
-  pcaSelect(ACTIVE_CHANNELS[SENSOR_WRIST_MPU9250]);
-  uint8_t st1 = i2cReadByte(AK8963_ADDR, AK8963_ST1);
-  if (!(st1 & 0x01)) return false;
-  uint8_t buf[7] = { 0 };
-  i2cReadBytes(AK8963_ADDR, AK8963_HXL, buf, 7);
-  int16_t mx = (int16_t)((buf[1] << 8) | buf[0]);
-  int16_t my = (int16_t)((buf[3] << 8) | buf[2]);
-  int16_t mz = (int16_t)((buf[5] << 8) | buf[4]);
-  magOut.x = (float)mx;
-  magOut.y = (float)my;
-  magOut.z = (float)mz;
-  return true;
+  return readMpu9250MagForSensor(SENSOR_WRIST_MPU9250, magOut);
 }
 
 static void updateWristMagYaw() {
@@ -2088,6 +2252,12 @@ static void updateWristMagYaw() {
 // A future DMP quaternion path should be wired under GAG_USE_MPU_DMP_QUAT_FIFO.
 static bool initOneIMU(uint8_t idx) {
   if (!isSensorEnabled(idx)) return true;
+  if (!isRuntimeUpdatedImuSensor(idx)) return true;
+  if (sensorUsesWt901Backend(idx)) {
+    const bool ok = detectWt901ForSensor(idx);
+    g_sensorAuxMagOk[idx] = ok && sensorUsesCompassDriftCorrection(idx);
+    return ok;
+  }
   if (!isMpuBackedSensor(idx)) return true;
   const uint8_t ch = ACTIVE_CHANNELS[idx];
   pcaSelect(ch);
@@ -2117,6 +2287,7 @@ static bool initOneIMU(uint8_t idx) {
     i2cWriteByte(mpuAddr, REG_GYRO_CONFIG, 0x00);
     i2cWriteByte(mpuAddr, REG_ACCEL_CONFIG, 0x00);
     configureMpuFifo(idx);
+    g_sensorAuxMagOk[idx] = initMpu9250MagForSensor(idx);
     return true;
   }
 
@@ -2137,13 +2308,21 @@ static bool initOneIMU(uint8_t idx) {
     mpu[idx].setZGyroOffset(hw.gz);
     configureMpuFifo(idx);
   }
+  if (ok && sensorUsesCompassDriftCorrection(idx)) {
+    g_sensorAuxMagOk[idx] = initMpu9250MagForSensor(idx);
+  }
   return ok;
 }
 
 static void updateOneIMU(uint8_t idx) {
   if (!isSensorEnabled(idx)) return;
-  if (!isMpuBackedSensor(idx)) return;
+  if (!isRuntimeUpdatedImuSensor(idx)) return;
   if (!g_sensorInitOk[idx]) return;
+  if (sensorUsesWt901Backend(idx)) {
+    updateWt901(idx);
+    return;
+  }
+  if (!isMpuBackedSensor(idx)) return;
   int16_t ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
   maybeResetMpuFifo(idx);
 
@@ -2209,6 +2388,17 @@ static void updateOneIMU(uint8_t idx) {
   } else {
     q = integrateGyroQuaternion(q, gxDegPerSec, gyDegPerSec, gzDegPerSec, dt);
     q = applyTiltCorrection(q, accelBody, kTiltCorrectionGain);
+  }
+
+  if (sensorUsesCompassDriftCorrection(idx)) {
+    Vec3 magBody;
+    if (readMpu9250MagForSensor(idx, magBody)) {
+      g_sensorAuxMagRaw[idx] = magBody;
+      q = applyHeadingCorrection(q, magBody, (float)GAG_FINGER_COMPASS_HEADING_CORRECTION_GAIN);
+    }
+  }
+
+  if (g_sensorFusionInitialized[idx]) {
     q = applyQuaternionAngularDeadband(idx, prevQ, q, dt);
   }
 
@@ -2255,12 +2445,13 @@ static bool readRawSampleForOffset(uint8_t sensorIdx, gag::offsets::RawImuSample
 }
 
 static bool hasConfiguredImuChannel(uint8_t sensorIdx) {
-  return sensorIdx < SENSOR_COUNT_ALL && isMpuBackedSensor(sensorIdx) && isSensorEnabled(sensorIdx) && g_sensorInitOk[sensorIdx];
+  return sensorIdx < SENSOR_COUNT_ALL && isRuntimeUpdatedImuSensor(sensorIdx) && isSensorEnabled(sensorIdx) && g_sensorInitOk[sensorIdx];
 }
 
 static bool isSensorAvailableForOffsetMeasurement(uint8_t sensorIdx) {
   if (!isSensorEnabled(sensorIdx)) return false;
   if (sensorIdx == SENSOR_WRIST_GY511) return gy511Ok;
+  if (sensorUsesWt901Backend(sensorIdx)) return false;
   return hasConfiguredImuChannel(sensorIdx);
 }
 
@@ -2845,6 +3036,8 @@ static void resetSensorRuntimeOrientationState() {
     g_sensorFusionInitialized[i] = false;
     g_lastAccelBody[i] = Vec3{ 0.0f, 0.0f, 0.0f };
     g_lastAccelBodyValid[i] = false;
+    g_sensorAuxMagOk[i] = false;
+    g_sensorAuxMagRaw[i] = Vec3{ 0.0f, 0.0f, 0.0f };
     lastT[i] = now;
   }
   wristMagRaw = Vec3{ 0, 0, 0 };
@@ -3765,6 +3958,8 @@ static void resetFusionState() {
     g_sensorMpuAddr[i] = 0;
     g_lastAccelBody[i] = Vec3{ 0.0f, 0.0f, 0.0f };
     g_lastAccelBodyValid[i] = false;
+    g_sensorAuxMagOk[i] = false;
+    g_sensorAuxMagRaw[i] = Vec3{ 0.0f, 0.0f, 0.0f };
     lastT[i] = now;
     g_lastFifoResetMs[i] = 0;
     g_driftResetLastPhysicalFixed[i] = gag::Quaternion();
@@ -3813,7 +4008,7 @@ static void initializeGloveRuntime(bool coldBootLog) {
   }
 
   for (uint8_t i = 0; i < SENSOR_COUNT_ALL; ++i) {
-    if (!isSensorEnabled(i) || !isMpuBackedSensor(i)) continue;
+    if (!isSensorEnabled(i) || !isRuntimeUpdatedImuSensor(i)) continue;
     bool ok = initOneIMU(i);
     g_sensorInitOk[i] = ok;
     lastT[i] = millis();
